@@ -1,6 +1,6 @@
 #!/bin/bash
 
-BASE_URL="https://ghfast.top/https://raw.githubusercontent.com/qljsyph/ATAsst/refs/heads/main/ATscripts"
+BASE_URL="https://ghfast.top/https://raw.githubusercontent.com/qljsyph/ATAsst/refs/heads/watch/ATscripts"                         
 SCRIPTS_DIR="/etc/mihomo/scripts"
 
 # 清空并定义关联数组

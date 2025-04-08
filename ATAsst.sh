@@ -110,6 +110,61 @@ sudo chmod -R 755 "$SCRIPTS_DIR" || { log_message "设置脚本目录权限失�
 log_message "下载安装..."
 wget -O "$SCRIPTS_DIR/menu.sh" "https://ghfast.top/https://raw.githubusercontent.com/qljsyph/ATAsst/refs/heads/main/ATscripts/menu.sh" > /dev/null 2>&1 || { log_message "下载 menu.sh 失败！"; exit 1; }
 
+log_message "开始集成 config.yaml 监控服务（mihomo-watch）..."
+
+# 安装 inotify-tools（用于监控文件变化）
+if ! command -v inotifywait &> /dev/null; then
+    log_message "未检测到 inotify-tools，正在安装..."
+    if [ -x "$(command -v apt-get)" ]; then
+        sudo apt-get install -y inotify-tools || { log_message "安装 inotify-tools 失败！"; exit 1; }
+    elif [ -x "$(command -v yum)" ]; then
+        sudo yum install -y inotify-tools || { log_message "安装 inotify-tools 失败！"; exit 1; }
+    else
+        log_message "无法通过 apt-get 或 yum 安装 inotify-tools，请手动安装！"
+        exit 1
+    fi
+else
+    log_message "已安装 inotify-tools"
+fi
+
+# 创建 watch-mihomo.sh 脚本
+WATCH_SCRIPT="$SCRIPTS_DIR/watch-mihomo.sh"
+log_message "生成监控脚本 $WATCH_SCRIPT ..."
+cat << 'EOF' | sudo tee "$WATCH_SCRIPT" > /dev/null
+#!/bin/bash
+WATCH_FILE="/etc/mihomo/config.yaml"
+while true; do
+    inotifywait -e modify,create,delete,move "$WATCH_FILE"
+    if [ $? -eq 0 ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') 文件 $WATCH_FILE 发生变化，正在重新加载 mihomo.service"
+        systemctl reload mihomo.service
+    else
+        echo "$(date '+%Y-%m-%d %H:%M:%S') 监控过程中出现错误"
+    fi
+done
+EOF
+
+sudo chmod +x "$WATCH_SCRIPT" || { log_message "设置监控脚本权限失败！"; exit 1; }
+
+# 创建 systemd 服务文件
+SERVICE_FILE="/etc/systemd/system/mihomo-watch.service"
+log_message "创建 systemd 服务文件 $SERVICE_FILE ..."
+cat << EOF | sudo tee "$SERVICE_FILE" > /dev/null
+[Unit]
+Description=Watch config.yaml and reload mihomo on change
+After=network.target
+Wants=mihomo.service
+
+[Service]
+ExecStart=$WATCH_SCRIPT
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 log_message "创建快捷方式..."
 echo "#!/bin/bash" | sudo tee /usr/local/bin/AT > /dev/null
 echo "bash /etc/mihomo/scripts/menu.sh" | sudo tee -a /usr/local/bin/AT > /dev/null

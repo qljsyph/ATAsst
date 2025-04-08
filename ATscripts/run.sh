@@ -10,6 +10,35 @@ function check_config_file() {
     return 0
 }
 
+function enable_mihomo_watch_service() {
+    SERVICE_FILE="/etc/systemd/system/mihomo-watch.service"
+    WATCH_SCRIPT="/etc/mihomo/scripts/watch-mihomo.sh"
+
+    echo "正在启用 config.yaml 监控服务..." >> "$LOG_FILE"
+
+    if [ ! -f "$SERVICE_FILE" ]; then
+        echo "监控服务文件 $SERVICE_FILE 不存在，跳过启用。" >> "$LOG_FILE"
+        return 0
+    fi
+
+    if [ ! -f "$WATCH_SCRIPT" ]; then
+        echo "监控脚本 $WATCH_SCRIPT 不存在，跳过启用。" >> "$LOG_FILE"
+        return 0
+    fi
+
+    echo "重新加载 systemd..." >> "$LOG_FILE"
+    sudo systemctl daemon-reload
+
+    echo "启用并启动 mihomo-watch.service ..." >> "$LOG_FILE"
+    sudo systemctl enable --now mihomo-watch.service
+
+    if systemctl is-active --quiet mihomo-watch.service; then
+        echo "mihomo-watch.service 已成功运行。" >> "$LOG_FILE"
+    else
+        echo "mihomo-watch.service 启动失败，请检查 systemctl status。" >> "$LOG_FILE"
+    fi
+}
+
 function check_and_run() {
    
     echo "正在重新加载 systemd 配置..." >> "$LOG_FILE"
@@ -55,6 +84,9 @@ function check_and_run() {
             echo "未知错误，请检查日志。" 
             return 1
         fi
+
+        # 成功后启用 mihomo-watch.service
+        enable_mihomo_watch_service
     fi
 }
 
