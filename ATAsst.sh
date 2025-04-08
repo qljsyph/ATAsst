@@ -137,7 +137,8 @@ while true; do
     inotifywait -e modify,create,delete,move "$WATCH_FILE"
     if [ $? -eq 0 ]; then
         echo "$(date '+%Y-%m-%d %H:%M:%S') 文件 $WATCH_FILE 发生变化，正在重新加载 mihomo.service"
-        systemctl reload mihomo.service
+        systemctl stop mihomo
+        systemctl start mihomo
     else
         echo "$(date '+%Y-%m-%d %H:%M:%S') 监控过程中出现错误"
     fi
