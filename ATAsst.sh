@@ -132,15 +132,17 @@ WATCH_SCRIPT="$SCRIPTS_DIR/watch-mihomo.sh"
 log_message "生成监控脚本 $WATCH_SCRIPT ..."
 cat << 'EOF' | sudo tee "$WATCH_SCRIPT" > /dev/null
 #!/bin/bash
-WATCH_FILE="/etc/mihomo/config.yaml"
+WATCH_DIR="/etc/mihomo"
+WATCH_FILE="config.yaml"
+
+echo "开始监控 $WATCH_DIR/$WATCH_FILE ..."
+
 while true; do
-    inotifywait -e modify,create,delete,move "$WATCH_FILE"
-    if [ $? -eq 0 ]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') 文件 $WATCH_FILE 发生变化，正在重新加载 mihomo.service"
+    change=$(inotifywait -e modify,create,delete,move "$WATCH_DIR" --format '%f' --quiet)
+    if [ "$change" = "$WATCH_FILE" ]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') 检测到 $WATCH_FILE 被修改，重启 mihomo.service"
         systemctl stop mihomo
         systemctl start mihomo
-    else
-        echo "$(date '+%Y-%m-%d %H:%M:%S') 监控过程中出现错误"
     fi
 done
 EOF
