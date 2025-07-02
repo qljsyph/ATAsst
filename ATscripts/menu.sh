@@ -42,8 +42,8 @@ function show_menu() {
     echo "======================================================="
     echo "1. 安装"
     echo "2. 卸载"
-    echo "3. 运行"
-    echo "4. 常用工具"
+    echo "3. 首次运行"
+    echo "4. 常用功能"
     echo "5. 配置文件工具"
     echo "6. 查看安装日志"
     echo "7. 更新ATAsst"
@@ -67,7 +67,7 @@ while true; do
             sudo bash "$SCRIPTS_DIR/uninstall.sh"
             ;;
         3)
-            echo "执行初始化运行..."
+            echo "执行首次运行..."
             sudo bash "$SCRIPTS_DIR/run.sh"
             ;;
         4) 
