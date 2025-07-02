@@ -77,8 +77,14 @@ function install_to_bin() {
     fi
     log_message "文件 $file_name 解压成功"
 
-    
     extracted_file="${file_name%.gz}"
+
+    # smart 内核解压后文件名为 smart，需重命名为 mihomo
+    if [[ "$extracted_file" == "smart"* ]]; then
+        log_message "检测到 smart 内核，重命名为 mihomo"
+        mv "$temp_dir/$extracted_file" "$temp_dir/mihomo"
+        extracted_file="mihomo"
+    fi
 
     if [ -f "$temp_dir/$extracted_file" ]; then
         log_message "正在将文件移动到 /usr/local/bin 并重命名为 mihomo..."
@@ -164,18 +170,20 @@ function install_version() {
             file_name=$(echo "$version" | awk -F $'\t' '{print $1}')
             tag=$(echo "$version" | awk -F $'\t' '{print $2}')
 
-            
             temp_dir=$(mktemp -d)
             log_message "临时目录创建成功：$temp_dir"
 
-            
             trap 'log_message "删除临时目录：$temp_dir"; rm -rf "$temp_dir"' EXIT
 
             log_message "正在下载 $version_type 版本: $file_name"
-            download_url="https://ghfast.top/https://github.com/MetaCubeX/mihomo/releases/download/$tag/$file_name"
+            # 根据版本类型选择不同的下载地址
+            if [ "$version_type" == "Smart" ]; then
+                download_url="https://ghfast.top/https://github.com/vernesong/mihomo/releases/download/$tag/$file_name"
+            else
+                download_url="https://ghfast.top/https://github.com/MetaCubeX/mihomo/releases/download/$tag/$file_name"
+            fi
             log_message "下载地址: $download_url"
 
-           
             http_code=$(curl -L -s -w "%{http_code}" "$download_url" -o "$temp_dir/$file_name")
             if [ "$http_code" == "200" ]; then
                 log_message "$file_name 下载完成"
@@ -196,7 +204,6 @@ function install_version() {
     unset IFS
 }
 
-
 function install_alpha() {
     log_message "开始尝试安装 Alpha 版本"
     if ! install_version "https://api.github.com/repos/MetaCubeX/mihomo/releases?per_page=5" "Alpha"; then
@@ -205,7 +212,6 @@ function install_alpha() {
     fi
     log_message "Alpha 版本安装成功"
 }
-
 
 function install_stable() {
     log_message "开始尝试安装发行版"
@@ -216,6 +222,32 @@ function install_stable() {
     log_message "发行版安装成功"
 }
 
+function install_smart() {
+    log_message "开始尝试安装 Smart 版本"
+    if ! install_version "https://api.github.com/repos/vernesong/mihomo/releases?per_page=5" "Smart"; then
+        log_message "安装 Smart 版本失败"
+        return 1
+    fi
+    log_message "Smart 版本安装成功"
+
+        # 下载 AI 模型
+    ai_model_url="https://github.com/vernesong/mihomo/releases/download/LightGBM-Model/Model.bin"
+    ai_model_path="/etc/mihomo/Model.bin"
+
+    log_message "开始准备 AI 模型存放目录..."
+    if [ ! -d "/etc/mihomo" ]; then
+        mkdir -p /etc/mihomo
+        log_message "已创建目录 /etc/mihomo"
+    fi
+
+    log_message "开始下载 AI 模型..."
+    if curl -L -o "$ai_model_path" "$ai_model_url"; then
+        log_message "AI 模型下载完成，已保存到 $ai_model_path"
+        chmod 644 "$ai_model_path"
+    else
+        log_message "AI 模型下载失败，请检查网络或手动下载。"
+    fi
+}
 
 function show_menu() {
     clear
@@ -224,8 +256,9 @@ function show_menu() {
     echo "==============================="
     echo "1) 安装 Alpha 版"
     echo "2) 安装发行版"
-    echo "3) 返回上层"
-    echo -n "请输入你的选择 [1-3]: "
+    echo "3) 安装 Smart 版"
+    echo "4) 返回上层"
+    echo -n "请输入你的选择 [1-4]: "
 }
 
 # 主控制逻辑
@@ -243,7 +276,12 @@ while true; do
                 log_message "安装过程中出现问题，请查看日志进行排查"
             fi
             ;;
-        3) 
+        3)
+            if ! install_smart; then
+                log_message "安装过程中出现问题，请查看日志进行排查"
+            fi
+            ;;
+        4) 
             echo "返回上层..."
             break
             ;;

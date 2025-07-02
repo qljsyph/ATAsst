@@ -2,7 +2,7 @@
 
 show_menu() {
     clear
-    echo "=== 常用工具菜单 ==="
+    echo "=== 常用功能菜单 ==="
     echo "1. 启动 mihomo 服务"   
     echo "2. 停止 mihomo 服务"
     echo "3. 查看 mihomo 服务状态"

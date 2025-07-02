@@ -37,7 +37,7 @@ function show_menu() {
     echo "           欢迎使用 ATAsst工具   致谢MetaCubeX项目     "
     echo "               本工具为辅助虚空终端快捷使用     "
     echo "                  使用者请遵守当地法律法       "
-    echo "            版本:1.11.1      工具作者:qljsyph       "
+    echo "            版本:1.12.0      工具作者:qljsyph       "
     echo "         Github:https://github.com/qljsyph/ATAsst"
     echo "======================================================="
     echo "1. 安装"
@@ -67,18 +67,18 @@ while true; do
             sudo bash "$SCRIPTS_DIR/uninstall.sh"
             ;;
         3)
-            echo "执行运行..."
+            echo "执行初始化运行..."
             sudo bash "$SCRIPTS_DIR/run.sh"
             ;;
         4) 
-            echo "常用工具..."
+            echo "常用功能..."
             sudo bash "$SCRIPTS_DIR/tools.sh"    
             ;;
         5)  echo "配置文件工具"
             sudo bash "$SCRIPTS_DIR/config.sh"
             ;;  
         6)
-            echo "查看安装错误日志..."
+            echo "查看安装日志..."
             sudo bash "$SCRIPTS_DIR/catlog.sh"
             ;;
         7)
