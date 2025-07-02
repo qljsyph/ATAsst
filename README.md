@@ -1,7 +1,9 @@
 # ATAsst
 > [!NOTE]
 > 致谢MetaCubeX [https://github.com/MetaCubeX](https://github.com/MetaCubeX)
+
 > 致谢vernesong [https://github.com/vernesong/OpenClash/releases/tag/mihomo](https://github.com/vernesong/OpenClash/releases/tag/mihomo)
+
 > 本项目是一个辅助虚空终端mihomo使用的工具，让使用更加便利。请使用者遵守当地法律法规。现已支持smart智能策略内核
 ## 支持环境：
 > [!TIP]
