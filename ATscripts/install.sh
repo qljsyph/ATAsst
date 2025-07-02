@@ -230,7 +230,6 @@ function install_smart() {
     fi
     log_message "Smart 版本安装成功"
 
-        # 下载 AI 模型
     ai_model_url="https://github.com/vernesong/mihomo/releases/download/LightGBM-Model/Model.bin"
     ai_model_path="/etc/mihomo/Model.bin"
 
