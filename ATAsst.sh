@@ -114,7 +114,7 @@ log_message "创建快捷方式..."
 echo "#!/bin/bash" | sudo tee /usr/local/bin/AT > /dev/null
 echo "bash /etc/mihomo/scripts/menu.sh" | sudo tee -a /usr/local/bin/AT > /dev/null
 sudo chmod +x /usr/local/bin/AT || { log_message "创建快捷方式失败！"; exit 1; }
-
+sudo ln -sf /usr/local/bin/AT /usr/local/bin/at || { log_message "创建 at 快捷方式失败！"; exit 1; }
 log_message "===== 安装完成 ====="
 
-echo "安装完成！现在你可以在终端中输入 'AT' 来运行程序。"
+echo "安装完成！现在你可以在终端中输入 'AT/at' 来运行程序。"

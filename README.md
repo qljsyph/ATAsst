@@ -13,7 +13,7 @@
 ```
 bash <(curl -sL https://ghfast.top/https://raw.githubusercontent.com/qljsyph/ATAsst/refs/heads/main/ATAsst.sh)
 ```
-（初始化运行结束，输入“**AT**”进入菜单）  
+（初始化运行结束，输入“**AT/at**”进入菜单）  
 
 ## 系统信息显示Install：
 ```
