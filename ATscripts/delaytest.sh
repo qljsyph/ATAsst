@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# ==============================================================================
+#                  外网真实延迟测试脚本
+# ==============================================================================
+
 # --- 配置 ---
 NUM_TESTS=5
 LOG_FILE="latency_log.txt"
@@ -25,76 +29,79 @@ COLOR_RESET=$'\033[0m'
 # --- 函数：执行核心测试逻辑 ---
 run_test() {
     local TARGET_URL="$1"
+    local output=""
+    local avg_time_ms=0
     
     case "$TARGET_URL" in
       http://* | https://*) ;;
       *) TARGET_URL="https://$TARGET_URL" ;;
     esac
 
-    printf "============================================================\n"
-    printf "  %s正在测试: %s%s%s\n" "${COLOR_BLUE}" "${COLOR_BOLD}" "${TARGET_URL}" "${COLOR_RESET}"
-    printf "============================================================\n"
-    
-    local total_duration_ms=0
-    local min_time_ms="999999"
-    local max_time_ms="0"
-    local successful_runs=0
+    output=$( {
+        printf "============================================================\n"
+        printf "  %s正在测试: %s%s%s\n" "${COLOR_BLUE}" "${COLOR_BOLD}" "${TARGET_URL}" "${COLOR_RESET}"
+        printf "============================================================\n"
+        
+        local total_duration_ms=0
+        local min_time_ms="999999"
+        local max_time_ms="0"
+        local successful_runs=0
 
-    for i in $(seq 1 $NUM_TESTS); do
-        local CACHE_BUST_URL
-        CACHE_BUST_URL="${TARGET_URL}?_t=$(date +%s%N)"
-        
-        local CURL_FORMAT="%{time_connect},%{time_pretransfer},%{time_total}"
-        
-        local response
-        response=$(curl -s \
-                     -H "Cache-Control: no-cache" \
-                     -H "Pragma: no-cache" \
-                     --connect-timeout "$CONNECT_TIMEOUT" \
-                     -o /dev/null \
-                     -w "$CURL_FORMAT" \
-                     "$CACHE_BUST_URL")
-        
-        if [ $? -ne 0 ] || [ -z "$response" ]; then
-            printf "  第 %d/%d 次: %s❌ 测试失败 (无法连接或超时)%s\n" "$i" "$NUM_TESTS" "${COLOR_RED}" "${COLOR_RESET}"
-            continue
+        for i in $(seq 1 $NUM_TESTS); do
+            local CACHE_BUST_URL
+            CACHE_BUST_URL="${TARGET_URL}?_t=$(date +%s%N)"
+            
+            local CURL_FORMAT="%{time_connect},%{time_pretransfer},%{time_total}"
+            
+            local response
+            response=$(curl -s \
+                         -H "Cache-Control: no-cache" \
+                         -H "Pragma: no-cache" \
+                         --connect-timeout "$CONNECT_TIMEOUT" \
+                         -o /dev/null \
+                         -w "$CURL_FORMAT" \
+                         "$CACHE_BUST_URL")
+            
+            if [ $? -ne 0 ] || [ -z "$response" ]; then
+                printf "  第 %d/%d 次: %s❌ 测试失败 (无法连接或超时)%s\n" "$i" "$NUM_TESTS" "${COLOR_RED}" "${COLOR_RESET}"
+                continue
+            fi
+            
+            successful_runs=$((successful_runs + 1))
+            
+            IFS=',' read -r connect_time_s tls_time_s run_time_s <<< "$response"
+
+            local connect_time_ms tls_time_ms run_time_ms
+            connect_time_ms=$(awk -v time="$connect_time_s" 'BEGIN { printf "%.0f", time * 1000 }')
+            tls_time_ms=$(awk -v time="$tls_time_s" 'BEGIN { printf "%.0f", time * 1000 }')
+            run_time_ms=$(awk -v time="$run_time_s" 'BEGIN { printf "%.0f", time * 1000 }')
+
+            printf "  第 %d/%d 次: 总延迟 = %s%s ms%s (连接: %s ms, TLS: %s ms)\n" "$i" "$NUM_TESTS" "${COLOR_BOLD}" "$run_time_ms" "${COLOR_RESET}" "$connect_time_ms" "$tls_time_ms"
+            
+            echo "$(date -u +"%Y-%m-%dT%H:%M:%SZ"),${TARGET_URL},${i},${connect_time_s},${tls_time_s},${run_time_s}" >> "$LOG_FILE"
+            
+            total_duration_ms=$((total_duration_ms + run_time_ms))
+            if [ "$run_time_ms" -lt "$min_time_ms" ]; then min_time_ms=$run_time_ms; fi
+            if [ "$run_time_ms" -gt "$max_time_ms" ]; then max_time_ms=$run_time_ms; fi
+        done
+
+        printf -- "------------------------------------------------------------\n"
+        if [ "$successful_runs" -gt 0 ]; then
+            avg_time_ms=$(awk -v total="$total_duration_ms" -v runs="$successful_runs" 'BEGIN { printf "%.2f", total / runs }')
+            printf "  📊 %s统计结果 (基于 %d 次成功测试):%s\n" "${COLOR_BOLD}" "$successful_runs" "${COLOR_RESET}"
+            printf "  - 最快 (Min): \t%s%s ms%s\n" "${COLOR_GREEN}" "${min_time_ms}" "${COLOR_RESET}"
+            printf "  - 最慢 (Max): \t%s%s ms%s\n" "${COLOR_RED}" "${max_time_ms}" "${COLOR_RESET}"
+            printf "  - 平均 (Avg): \t%s%s ms%s\n" "${COLOR_YELLOW}" "${avg_time_ms}" "${COLOR_RESET}"
+        else
+            printf "  📊 %s所有测试均失败,无法生成统计数据。%s\n" "${COLOR_RED}" "${COLOR_RESET}"
+            avg_time_ms="0"
         fi
+        printf "============================================================\n"
         
-        successful_runs=$((successful_runs + 1))
-        
-        # 使用IFS和read安全分割输出
-        IFS=',' read -r connect_time_s tls_time_s run_time_s <<< "$response"
-
-        local connect_time_ms tls_time_ms run_time_ms
-        connect_time_ms=$(awk -v time="$connect_time_s" 'BEGIN { printf "%.0f", time * 1000 }')
-        tls_time_ms=$(awk -v time="$tls_time_s" 'BEGIN { printf "%.0f", time * 1000 }')
-        run_time_ms=$(awk -v time="$run_time_s" 'BEGIN { printf "%.0f", time * 1000 }')
-
-        printf "  第 %d/%d 次: 总延迟 = %s%s ms%s (连接: %s ms, TLS: %s ms)\n" "$i" "$NUM_TESTS" "${COLOR_BOLD}" "$run_time_ms" "${COLOR_RESET}" "$connect_time_ms" "$tls_time_ms"
-        
-        echo "$(date -u +"%Y-%m-%dT%H:%M:%SZ"),${TARGET_URL},${i},${connect_time_s},${tls_time_s},${run_time_s}" >> "$LOG_FILE"
-        
-        total_duration_ms=$((total_duration_ms + run_time_ms))
-        if [ "$run_time_ms" -lt "$min_time_ms" ]; then min_time_ms=$run_time_ms; fi
-        if [ "$run_time_ms" -gt "$max_time_ms" ]; then max_time_ms=$run_time_ms; fi
-    done
-
-    printf -- "------------------------------------------------------------\n"
-    if [ "$successful_runs" -gt 0 ]; then
-        local avg_time_ms
-        avg_time_ms=$(awk -v total="$total_duration_ms" -v runs="$successful_runs" 'BEGIN { printf "%.2f", total / runs }')
-        printf "  📊 %s统计结果 (基于 %d 次成功测试):%s\n" "${COLOR_BOLD}" "$successful_runs" "${COLOR_RESET}"
-        printf "  - 最快 (Min): \t%s%s ms%s\n" "${COLOR_GREEN}" "${min_time_ms}" "${COLOR_RESET}"
-        printf "  - 最慢 (Max): \t%s%s ms%s\n" "${COLOR_RED}" "${max_time_ms}" "${COLOR_RESET}"
-        printf "  - 平均 (Avg): \t%s%s ms%s\n" "${COLOR_YELLOW}" "${avg_time_ms}" "${COLOR_RESET}"
-    else
-        printf "  📊 %s所有测试均失败,无法生成统计数据。%s\n" "${COLOR_RED}" "${COLOR_RESET}"
-        avg_time_ms="0"
-    fi
-    printf "============================================================\n"
+        echo "$avg_time_ms"
+    } | tee /dev/tty )
     
-    # 返回平均延迟时间，用于批量测试比较
-    echo "$avg_time_ms"
+    echo "$output" | tail -n 1
 }
 
 # --- 函数：批量测试多个地址 ---
@@ -106,49 +113,53 @@ run_batch_test() {
     printf "%s%s🚀 开始批量测试多个目标 🚀%s\n" "${COLOR_PURPLE}" "${COLOR_BOLD}" "${COLOR_RESET}"
     printf -- "----------------------------------\n"
     
-    # 依次测试每个目标
     for target in "${targets[@]}"; do
         printf "\n%s开始测试目标: %s%s\n" "${COLOR_BLUE}" "${target}" "${COLOR_RESET}"
-        # 等待1秒，避免测试之间过于密集
         sleep 1
         
-        # 执行测试并获取结果
-        result=$(run_test "$target")
+        result=$(run_test "$target" | tail -n 1)
         
-        # 存储结果
-        results+=("$result")
-        target_names+=("$target")
+        if [[ "$result" =~ ^[0-9]+([.][0-9]+)?$ ]] && (( $(echo "$result > 0" | bc -l) )); then
+            results+=("$result")
+            target_names+=("$target")
+        else
+            printf "⚠️  忽略 %s，无效延迟值 '%s'\n" "$target" "$result"
+        fi
     done
     
-    # 显示所有测试结果的汇总比较
-    show_batch_results "${target_names[@]}" "${results[@]}"
+    if [ ${#results[@]} -gt 0 ]; then
+        show_batch_results "${target_names[@]}" "${results[@]}"
+    else
+        printf "%s没有有效的测试结果可显示。%s\n" "${COLOR_RED}" "${COLOR_RESET}"
+    fi
 }
 
 # --- 函数：显示批量测试结果比较 ---
 show_batch_results() {
-    local names=("${@:1:$#/2}")
-    local times=("${@:$#/2+1}")
+    local -a names=("${@:1:$#/2}")
+    local -a times=("${@:$#/2+1}")
     
     printf "%s%s📊 批量测试结果汇总 📊%s\n" "${COLOR_PURPLE}" "${COLOR_BOLD}" "${COLOR_RESET}"
     printf -- "----------------------------------\n"
     printf "%-20s %-15s %-10s\n" "目标域名" "平均延迟(ms)" "排名"
     printf -- "----------------------------------\n"
     
-    # 创建关联数组，将域名和延迟时间对应
     declare -A time_map
     for i in "${!names[@]}"; do
-        time_map["${names[$i]}"]="${times[$i]}"
+        local name="${names[$i]}"
+        local time="${times[$i]}"
+        
+        if [[ "$time" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+            time_map["$name"]="$time"
+        fi
     done
     
-    # 对延迟时间进行排序
     mapfile -t sorted < <(printf "%s\n" "${times[@]}" | sort -n)
     
-    # 显示排名结果
     rank=1
     for time in "${sorted[@]}"; do
         for name in "${!time_map[@]}"; do
             if [ "${time_map[$name]}" = "$time" ]; then
-                # 根据延迟时间设置颜色
                 if (( $(echo "$time < 200" | bc -l) )); then
                     color="${COLOR_GREEN}"
                 elif (( $(echo "$time < 500" | bc -l) )); then
@@ -158,7 +169,6 @@ show_batch_results() {
                 fi
                 
                 printf "%-20s ${color}%-15s${COLOR_RESET} %-10s\n" "$name" "$time" "$rank"
-                # 从关联数组中删除已显示的项，避免重复显示
                 unset "time_map[$name]"
                 rank=$((rank + 1))
             fi
@@ -194,7 +204,7 @@ fi
 
 while true; do
     show_menu
-    read -rp "请输入您的选择 [1-$((${#PREDEFINED_TARGETS[@]})), b, m, r, q]: " choice
+    read -rp "请输入您的选择 [1-$((${#PREDEFINED_TARGETS[@]})), b, m, q]: " choice
 
     case "$choice" in
         [qQ])
@@ -202,7 +212,6 @@ while true; do
             exit 0
             ;;
         [bB])
-            # 测试谷歌、百度、github、youtube
             run_batch_test "www.google.com" "www.baidu.com" "www.github.com" "www.youtube.com"
             ;;
         [mM])

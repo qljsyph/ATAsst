@@ -38,7 +38,7 @@ function show_menu() {
     echo "           欢迎使用 ATAsst工具   致谢MetaCubeX项目     "
     echo "               本工具为辅助虚空终端快捷使用     "
     echo "                  使用者请遵守当地法律法       "
-    echo "            版本:1.12.3      工具作者:qljsyph       "
+    echo "            版本:1.12.4      工具作者:qljsyph       "
     echo "         Github:https://github.com/qljsyph/ATAsst"
     echo "======================================================="
     echo "1. 安装"
