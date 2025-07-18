@@ -172,7 +172,7 @@ show_batch_results() {
 # --- 函数：显示主菜单 ---
 show_menu() {
     clear
-    printf "%s%s🚀 欢迎使用宇哥真实延迟测试脚本 🚀%s\n" "${COLOR_PURPLE}" "${COLOR_BOLD}" "${COLOR_RESET}"
+    printf "%s%s🚀 外网真实延迟测试脚本 🚀%s\n" "${COLOR_PURPLE}" "${COLOR_BOLD}" "${COLOR_RESET}"
     printf -- "----------------------------------\n"
     printf "%s请选择一个要测试的目标:%s\n" "${COLOR_CYAN}" "${COLOR_RESET}"
     
