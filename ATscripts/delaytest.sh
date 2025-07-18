@@ -1,9 +1,5 @@
 #!/bin/bash
 
-# ==============================================================================
-#                  宇哥真实延迟测试脚本
-# ==============================================================================
-
 # --- 配置 ---
 NUM_TESTS=5
 LOG_FILE="latency_log.txt"
@@ -187,7 +183,6 @@ show_menu() {
     printf -- "----------------------------------\n"
     printf "  %sb)%s 测试谷歌、百度、github、youtube\n" "${COLOR_YELLOW}" "${COLOR_RESET}"
     printf "  %sm)%s 手动输入域名 (Manual Input)\n" "${COLOR_YELLOW}" "${COLOR_RESET}"
-    printf "  %sr)%s 返回上一级菜单 (Return)\n" "${COLOR_YELLOW}" "${COLOR_RESET}"
     printf "  %sq)%s 退出 (Quit)\n" "${COLOR_YELLOW}" "${COLOR_RESET}"
     printf -- "----------------------------------\n"
 }
@@ -217,10 +212,6 @@ while true; do
             else
                 printf "%s输入不能为空,请重试。%s\n" "${COLOR_RED}" "${COLOR_RESET}"; sleep 2
             fi
-            ;;
-        [rR])
-            # 返回上一级菜单
-            continue
             ;;
         *)
             if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "${#PREDEFINED_TARGETS[@]}" ]; then
