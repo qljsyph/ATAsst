@@ -1,4 +1,5 @@
 #!/bin/bash
+SCRIPTS_DIR="/etc/mihomo/scripts"
 
 show_menu() {
     clear
@@ -52,9 +53,14 @@ disable_service() {
     read -r -p "按回车键返回菜单..."
 }
 
+run_delaytest() {
+    echo "正在运行延迟测试脚本..."
+    bash "$SCRIPTS_DIR/delaytest.sh"
+}
+
 while true; do
     show_menu
-    read -r -p "请输入选择 (1-7): " choice
+    read -r -p "请输入选择 (1-8): " choice
     case $choice in
         1) start_service ;;
         2) stop_service ;;
@@ -62,7 +68,8 @@ while true; do
         4) view_logs ;;
         5) enable_service ;;
         6) disable_service ;;
-        7) break ;;  # 选择返回上层，退出循环
+        7) run_delaytest ;;
+        8) break ;;
         *) echo "无效选择，请重新输入。" ;;
     esac
 done
