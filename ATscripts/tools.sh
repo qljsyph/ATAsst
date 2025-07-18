@@ -10,7 +10,8 @@ show_menu() {
     echo "4. 查看 mihomo 服务实时日志"
     echo "5. 启用 mihomo 服务自启动"
     echo "6. 关闭 mihomo 服务自启动"
-    echo "7. 返回上层"
+    echo "7. 外网真实延迟测试"
+    echo "8. 返回上层"
 }
 
 start_service() {
@@ -54,7 +55,7 @@ disable_service() {
 }
 
 run_delaytest() {
-    echo "正在运行延迟测试脚本..."
+    echo "外网真实延迟测试..."
     bash "$SCRIPTS_DIR/delaytest.sh"
 }
 
