@@ -9,7 +9,6 @@ echo "=============================="
 echo "   Armbian 网络配置工具"
 echo "=============================="
 
-# 自动检测默认网卡
 IFACE=$(ip route show default | awk '/default/ {print $5}' | head -n 1)
 
 if [ -z "$IFACE" ]; then
@@ -27,27 +26,22 @@ if ! systemctl is-active --quiet NetworkManager; then
     sleep 2
 fi
 
-# 列出所有可用的网络连接
 echo ">>> 正在查找网络连接..."
 echo "可用的网络连接列表："
 sudo nmcli con show
 echo
 
-# 获取与当前网卡关联的连接（改进的检测方法）
 CON_NAME=$(sudo nmcli -t -f NAME,DEVICE con show --active | grep ":$IFACE$" | cut -d':' -f1)
 
-# 如果没找到活动连接，尝试查找所有连接
 if [ -z "$CON_NAME" ]; then
     CON_NAME=$(sudo nmcli -t -f NAME,DEVICE con show | grep ":$IFACE$" | cut -d':' -f1 | head -n 1)
 fi
 
-# 如果还是没找到，让用户手动选择
 if [ -z "$CON_NAME" ]; then
     echo "⚠️ 未自动检测到 $IFACE 的连接配置"
     echo "请从上面的列表中输入完整的连接名称（注意空格和大小写）："
     read -p "连接名称: " CON_NAME
     
-    # 验证连接是否存在
     if ! sudo nmcli con show "$CON_NAME" &>/dev/null; then
         echo "❌ 连接 '$CON_NAME' 不存在，退出脚本"
         exit 1
