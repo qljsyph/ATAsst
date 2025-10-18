@@ -59,8 +59,18 @@ fi
 
 
 if [ -f "$SCRIPTS_DIR/menu.sh" ]; then
-    local_current_version=$(grep -oP '(?<=版本:)[0-9.]+' "$SCRIPTS_DIR/menu.sh" | head -n1)
-    log_message "当前本地版本：$local_current_version"
+    # 优先解析 LOCAL_VERSION="x.y.z"
+    local_current_version=$(grep -oP 'LOCAL_VERSION\s*=\s*"[0-9.]+"' "$SCRIPTS_DIR/menu.sh" 2>/dev/null | sed -E 's/.*"([0-9.]+)".*/\1/' || true)
+    # 回退到解析输出的“版本:1.2.3”
+    if [ -z "$local_current_version" ]; then
+        local_current_version=$(grep -oP '(?<=版本:)[0-9.]+' "$SCRIPTS_DIR/menu.sh" | head -n1 || true)
+    fi
+    if [ -z "$local_current_version" ]; then
+        log_message "未找到本地 menu.sh 中的版本信息，假设当前版本为 0.0.0"
+        local_current_version="0.0.0"
+    else
+        log_message "当前本地版本：$local_current_version"
+    fi
 else
     log_message "未找到本地 menu.sh，假设当前版本为 0.0.0"
     local_current_version="0.0.0"
