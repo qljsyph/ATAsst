@@ -78,10 +78,18 @@ fi
 
 
 log_message "获取远程版本信息..."
-remote_version=$(curl_with_retry "$BASE_URL/menu.sh" | grep -oP '(?<=版本:)[0-9.]+' | head -n1)
+remote_menu=$(curl_with_retry "$BASE_URL/menu.sh") || { log_message "获取远程 menu.sh 失败，退出。"; exit 1; }
+
+# 优先解析远端定义的 LOCAL_VERSION="x.y.z"
+remote_version=$(echo "$remote_menu" | grep -oP 'LOCAL_VERSION\s*=\s*"[0-9.]+"' | sed -E 's/.*"([0-9.]+)".*/\1/' || true)
+
+# 回退到解析页面显示的“版本:x.y.z”
+if [ -z "$remote_version" ]; then
+    remote_version=$(echo "$remote_menu" | grep -oP '(?<=版本:)[0-9.]+' | head -n1 || true)
+fi
 
 if [ -z "$remote_version" ]; then
-    log_message "获取远程版本信息失败，退出。"
+    log_message "获取远程版本信息失败或解析不到版本，退出。"
     exit 1
 fi
 
