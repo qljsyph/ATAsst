@@ -124,6 +124,7 @@ declare -A files=(
     ["依赖8"]="reset.sh"
     ["依赖9"]="config.sh"
     ["依赖10"]="delaytest.sh"
+    ["依赖11"]="ipmanager.sh"
 )
 
 for key in "${!files[@]}"; do

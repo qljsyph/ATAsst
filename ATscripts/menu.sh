@@ -16,6 +16,7 @@ declare -A files=(
     ["依赖8"]="reset.sh"
     ["依赖9"]="config.sh"
     ["依赖10"]="delaytest.sh"
+    ["依赖11"]="ipmanger.sh"
 )
 
 function check_and_download_scripts() {
@@ -38,7 +39,7 @@ function show_menu() {
     echo "           欢迎使用 ATAsst工具   致谢MetaCubeX项目     "
     echo "               本工具为辅助虚空终端快捷使用     "
     echo "                  使用者请遵守当地法律法       "
-    echo "            版本:1.12.4      工具作者:qljsyph       "
+    echo "            版本:1.12.5      工具作者:qljsyph       "
     echo "         Github:https://github.com/qljsyph/ATAsst"
     echo "======================================================="
     echo "1. 安装"
@@ -48,7 +49,8 @@ function show_menu() {
     echo "5. 配置文件工具"
     echo "6. 查看安装日志"
     echo "7. 更新ATAsst"
-    echo "8. 退出"
+    echo "8. 网络管理"
+    echo "9. 退出"
 }
 
 # 主逻辑
@@ -87,6 +89,10 @@ while true; do
             sudo bash "$SCRIPTS_DIR/update_scripts.sh"
             ;;
         8)
+            echo "网络管理..."
+            sudo bash "$SCRIPTS_DIR/ipmanger.sh"
+            ;;
+        9)
             echo "退出程序"
             exit 0
             ;;
