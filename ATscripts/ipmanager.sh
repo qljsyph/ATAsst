@@ -75,14 +75,12 @@ while true; do
         echo
         echo ">>> 正在应用静态IP配置..."
 
-        # 构建 DNS 参数
         if [ -n "$DNS2" ]; then
             DNS_PARAM="$DNS1 $DNS2"
         else
             DNS_PARAM="$DNS1"
         fi
 
-        # 应用配置（使用引号包裹连接名称）
         if sudo nmcli con mod "$CON_NAME" \
             ipv4.method manual \
             ipv4.addresses "$IP_ADDR/$MASK" \
@@ -93,10 +91,9 @@ while true; do
             
             echo ">>> 配置已应用，正在重启网络连接..."
             
-            # 重启连接
-            sudo nmcli con down "$CON_NAME" 2>/dev/null
+            sudo nmcli con down "$CON_NAME" >/dev/null 2>&1
             sleep 1
-            sudo nmcli con up "$CON_NAME"
+            sudo nmcli con up "$CON_NAME" >/dev/null 2>&1
             
             echo
             echo "✅ 静态IP设置完成！当前网络信息："
@@ -114,9 +111,9 @@ while true; do
             ipv4.ignore-auto-dns no \
             connection.autoconnect yes; then
             
-            sudo nmcli con down "$CON_NAME" 2>/dev/null
+            sudo nmcli con down "$CON_NAME" >/dev/null 2>&1
             sleep 1
-            sudo nmcli con up "$CON_NAME"
+            sudo nmcli con up "$CON_NAME" >/dev/null 2>&1
 
             echo
             echo "✅ 已切换为 DHCP 模式！当前网络信息："
