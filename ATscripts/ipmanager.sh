@@ -1,13 +1,43 @@
 #!/bin/bash
 # =========================================
-# Armbian 网络配置脚本（静态IP / DHCP / 查看配置，支持重启后保持IP）
-# 修复版：处理连接名称中的空格和特殊字符
+# Armbian 网络配置管理
 # =========================================
 
 clear
 echo "=============================="
 echo "   Armbian 网络配置工具"
 echo "=============================="
+
+# 日志配置
+LOG_DIR="/var/log/ATAsst"
+LOG_FILE="$LOG_DIR/ipmanager.log"
+sudo mkdir -p "$LOG_DIR"
+sudo touch "$LOG_FILE"
+# 尝试把日志文件归当前用户（若无权限忽略）
+sudo chown "$(whoami)" "$LOG_FILE" 2>/dev/null || true
+
+log() {
+    local msg="$*"
+    echo "$(date '+%F %T') $msg" >> "$LOG_FILE"
+}
+
+run_and_log() {
+    local cmd="$*"
+    log "CMD: $cmd"
+    if output=$(eval "$cmd" 2>&1); then
+        if [ -n "$output" ]; then
+            log "OK: $output"
+        else
+            log "OK"
+        fi
+        return 0
+    else
+        log "ERROR: $output"
+        return 1
+    fi
+}
+
+log "脚本启动"
 
 IFACE=$(ip route show default | awk '/default/ {print $5}' | head -n 1)
 
@@ -17,18 +47,19 @@ if [ -z "$IFACE" ]; then
 fi
 
 echo "当前检测到的网卡：$IFACE"
+log "检测到网卡: $IFACE"
 echo
 
-# 检查 NetworkManager 服务状态
 if ! systemctl is-active --quiet NetworkManager; then
     echo "⚠️ NetworkManager 未运行，正在启动..."
-    sudo systemctl start NetworkManager
+    log "NetworkManager 未运行，尝试启动"
+    run_and_log "sudo systemctl start NetworkManager"
     sleep 2
 fi
 
 echo ">>> 正在查找网络连接..."
 echo "可用的网络连接列表："
-sudo nmcli con show
+sudo nmcli --color yes con show | tee -a "$LOG_FILE" 
 echo
 
 CON_NAME=$(sudo nmcli -t -f NAME,DEVICE con show --active | grep ":$IFACE$" | cut -d':' -f1)
@@ -41,15 +72,18 @@ if [ -z "$CON_NAME" ]; then
     echo "⚠️ 未自动检测到 $IFACE 的连接配置"
     echo "请从上面的列表中输入完整的连接名称（注意空格和大小写）："
     read -p "连接名称: " CON_NAME
-    
+
     if ! sudo nmcli con show "$CON_NAME" &>/dev/null; then
         echo "❌ 连接 '$CON_NAME' 不存在，退出脚本"
+        log "用户输入连接 '$CON_NAME' 不存在，退出"
         exit 1
     fi
 fi
 
 echo ">>> 将使用连接：$CON_NAME"
+log "将使用连接: $CON_NAME"
 echo ">>> 关联网卡：$IFACE"
+log "将操作网卡: $IFACE"
 echo
 
 # 主菜单
@@ -72,6 +106,8 @@ while true; do
         read -p "请输入主DNS（例如 223.5.5.5）: " DNS1
         read -p "请输入备用DNS（可留空）: " DNS2
 
+        log "设置静态IP: IP=$IP_ADDR/$MASK GATEWAY=$GATEWAY DNS1=$DNS1 DNS2=$DNS2"
+
         echo
         echo ">>> 正在应用静态IP配置..."
 
@@ -81,46 +117,52 @@ while true; do
             DNS_PARAM="$DNS1"
         fi
 
-        if sudo nmcli con mod "$CON_NAME" \
+        if run_and_log "sudo nmcli con mod \"${CON_NAME}\" \
             ipv4.method manual \
-            ipv4.addresses "$IP_ADDR/$MASK" \
-            ipv4.gateway "$GATEWAY" \
-            ipv4.dns "$DNS_PARAM" \
+            ipv4.addresses \"${IP_ADDR}/${MASK}\" \
+            ipv4.gateway \"${GATEWAY}\" \
+            ipv4.dns \"${DNS_PARAM}\" \
             ipv4.ignore-auto-dns yes \
-            connection.autoconnect yes; then
-            
+            connection.autoconnect yes"; then
+
             echo ">>> 配置已应用，正在重启网络连接..."
-            
-            sudo nmcli con down "$CON_NAME" >/dev/null 2>&1
+            log "已修改连接配置，尝试下线再上线连接: $CON_NAME"
+            run_and_log "sudo nmcli con down \"${CON_NAME}\""
             sleep 1
-            sudo nmcli con up "$CON_NAME" >/dev/null 2>&1
-            
+            run_and_log "sudo nmcli con up \"${CON_NAME}\""
+
             echo
             echo "✅ 静态IP设置完成！当前网络信息："
             sleep 2
-            nmcli dev show "$IFACE" | grep -E "IP4\.ADDRESS|IP4\.GATEWAY|IP4\.DNS"
+            nmcli dev show "$IFACE" | tee -a "$LOG_FILE" | grep -E "IP4\.ADDRESS|IP4\.GATEWAY|IP4\.DNS"
+            log "静态IP设置完成，显示当前网络信息"
         else
             echo "❌ 配置失败，请检查输入参数"
+            log "静态IP配置失败"
         fi
         ;;
     2)
         echo ">>> 正在切换为 DHCP 模式..."
-        if sudo nmcli con mod "$CON_NAME" \
+        log "切换为 DHCP 模式"
+        if run_and_log "sudo nmcli con mod \"${CON_NAME}\" \
             ipv4.method auto \
-            ipv4.dns "" \
+            ipv4.gateway \"\" \
+            ipv4.dns \"\" \
             ipv4.ignore-auto-dns no \
-            connection.autoconnect yes; then
-            
-            sudo nmcli con down "$CON_NAME" >/dev/null 2>&1
+            connection.autoconnect yes"; then
+
+            run_and_log "sudo nmcli con down \"${CON_NAME}\""
             sleep 1
-            sudo nmcli con up "$CON_NAME" >/dev/null 2>&1
+            run_and_log "sudo nmcli con up \"${CON_NAME}\""
 
             echo
             echo "✅ 已切换为 DHCP 模式！当前网络信息："
             sleep 2
-            nmcli dev show "$IFACE" | grep -E "IP4\.ADDRESS|IP4\.GATEWAY|IP4\.DNS"
+            nmcli dev show "$IFACE" | tee -a "$LOG_FILE" | grep -E "IP4\.ADDRESS|IP4\.GATEWAY|IP4\.DNS"
+            log "切换为 DHCP 完成，显示当前网络信息"
         else
             echo "❌ 切换失败"
+            log "切换为 DHCP 失败"
         fi
         echo
         ;;
@@ -130,6 +172,7 @@ while true; do
         echo "网卡名称：$IFACE"
         echo
 
+        log "查看当前网络配置: $CON_NAME on $IFACE"
         # 获取并显示 ipv4.method（判断是静态还是 DHCP）
         IPV4_METHOD=$(nmcli -g ipv4.method con show "$CON_NAME" 2>/dev/null)
         if [ -z "$IPV4_METHOD" ]; then
@@ -146,18 +189,21 @@ while true; do
         echo "IP 模式：$MODE_DESC"
         echo
 
-        nmcli con show "$CON_NAME" | grep -E "ipv4\.(method|addresses|gateway|dns)" || true
+        nmcli con show "$CON_NAME" | tee -a "$LOG_FILE" | grep -E "ipv4\.(method|addresses|gateway|dns)" || true
         echo
         echo "实际IP信息："
-        nmcli dev show "$IFACE" | grep -E "IP4\.ADDRESS|IP4\.GATEWAY|IP4\.DNS" || true
+        nmcli dev show "$IFACE" | tee -a "$LOG_FILE" | grep -E "IP4\.ADDRESS|IP4\.GATEWAY|IP4\.DNS" || true
         echo
+        log "显示完当前网络配置"
         ;;
     4)
         echo ">>> 重新检测网络连接..."
+        log "用户选择重新检测网络连接，重启脚本"
         exec "$0"
         ;;
     5)
         echo "已退出。"
+        log "脚本退出"
         exit 0
         ;;
     *)

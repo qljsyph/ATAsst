@@ -5,8 +5,8 @@ if [ "$EUID" -ne 0 ]; then
     echo "请使用 sudo 运行此脚本。"
     exit 1
 fi
-
-LOG_FILE="/var/log/mihomo_install.log"
+LOG_DIR="/var/log/ATAsst"
+LOG_FILE="$LOG_DIR/mihomo_install.log"
 
 
 true > "$LOG_FILE"

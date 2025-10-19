@@ -4,7 +4,8 @@ if [ "$EUID" -ne 0 ]; then
     echo "请使用 root 用户运行此脚本。"
     exit 1
 fi
-LOG_FILE="/var/log/AT_install.log"
+LOG_DIR="/var/log/ATAsst"
+LOG_FILE="$LOG_DIR/AT_install.log"
 
 function log_message() {
     echo "$1" | tee -a "$LOG_FILE"

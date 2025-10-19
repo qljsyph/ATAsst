@@ -2,7 +2,8 @@
 
 BASE_URL="https://ghfast.top/https://raw.githubusercontent.com/qljsyph/ATAsst/refs/heads/main/ATscripts"
 SCRIPTS_DIR="/etc/mihomo/scripts"
-LOG_FILE="/var/log/AT_update.log"
+LOG_DIR="/var/log/ATAsst"
+LOG_FILE="$LOG_DIR/AT_update.log"
 TEMP_DIR="/tmp/mihomo_update_temp"
 
 # 最大重试次数
