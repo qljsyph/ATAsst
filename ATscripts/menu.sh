@@ -22,11 +22,26 @@ declare -A files=(
 function get_remote_version() {
     local url="$BASE_URL/menu.sh"
     local remote=""
-    if command -v curl >/dev/null 2>&1; then
-        remote=$(curl -fsSL "$url" 2>/dev/null | grep -m1 '版本:' | sed -E 's/.*版本:([0-9.]+).*/\1/' || true)
-    elif command -v wget >/dev/null 2>&1; then
-        remote=$(wget -qO- "$url" 2>/dev/null | grep -m1 '版本:' | sed -E 's/.*版本:([0-9.]+).*/\1/' || true)
-    fi
+    local retries=3  
+    while [ $retries -gt 0 ]; do
+        if command -v curl >/dev/null 2>&1; then
+            remote_content=$(curl -fsSL "$url" 2>/dev/null)
+        elif command -v wget >/dev/null 2>&1; then
+            remote_content=$(wget -qO- "$url" 2>/dev/null)
+        else
+            echo ""  
+            return
+        fi
+        remote=$(echo "$remote_content" | grep -oP 'LOCAL_VERSION\s*=\s*"[0-9.]+"' | sed -E 's/.*"([0-9.]+)".*/\1/' || true)
+        if [ -z "$remote" ]; then
+            remote=$(echo "$remote_content" | grep -m1 '版本:' | sed -E 's/.*版本:([0-9.]+).*/\1/' || true)
+        fi
+
+        [ -n "$remote" ] && break  # 提取成功则退出重试
+        retries=$((retries - 1))
+        sleep 2
+    done
+
     echo "$remote"
 }
 
@@ -113,7 +128,7 @@ function show_menu() {
     if [ "$NEW_VERSION_AVAILABLE" -eq 1 ]; then
         echo -e "            版本: ${GREEN}${LOCAL_VERSION}${NC}   (${YELLOW}检测到新版本: ${REMOTE_VERSION}${NC})"
     else
-        echo "            版本: ${LOCAL_VERSION}"
+        echo "                      版本: ${LOCAL_VERSION}                          "
     fi
     echo "         Github:https://github.com/qljsyph/ATAsst"
     echo "======================================================="
