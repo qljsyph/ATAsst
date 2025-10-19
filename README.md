@@ -4,7 +4,7 @@
 
 > 致谢vernesong [https://github.com/vernesong/OpenClash/releases/tag/mihomo](https://github.com/vernesong/OpenClash/releases/tag/mihomo)
 
-> 本项目是一个辅助虚空终端mihomo使用的工具，让使用裸核更加便利。请使用者遵守当地法律法规。现已支持smart智能策略内核
+> 本项目是一个辅助虚空终端mihomo使用的工具，让使用裸核更加便利。请使用者遵守当地法律法规。现已支持smart智能策略内核。新增armbian网络管理静态、dhcp自如切换，网络环境改变后ssh也能便捷。
 ## 支持环境：
 > [!TIP]
 > 目前支持系统为linux下debian armbian ubuntu
