@@ -2,8 +2,8 @@
 
 BASE_URL="https://ghfast.top/https://raw.githubusercontent.com/qljsyph/ATAsst/refs/heads/main/ATscripts"
 SCRIPTS_DIR="/etc/mihomo/scripts"
-# 版本:1.13.0
-LOCAL_VERSION="1.13.0"
+# 版本:1.13.1
+LOCAL_VERSION="1.13.1"
 # 清空并定义关联数组
 unset files
 declare -A files=(
