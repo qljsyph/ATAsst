@@ -3,6 +3,7 @@
 BASE_URL="https://ghfast.top/https://raw.githubusercontent.com/qljsyph/ATAsst/refs/heads/main/ATscripts"
 SCRIPTS_DIR="/etc/mihomo/scripts"
 LOCAL_VERSION="1.13.0"
+版本:1.30.0 #兼顾版本检测
 # 清空并定义关联数组
 unset files
 declare -A files=(
@@ -124,7 +125,7 @@ function show_menu() {
     echo "5. 配置文件工具"
     echo "6. 查看安装日志"
     echo "7. 更新ATAsst"
-    echo "8. 网络管理"
+    echo "8. Armbian网络管理"
     echo "9. 退出"
 }
 
