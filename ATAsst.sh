@@ -1,10 +1,14 @@
 #!/bin/bash
-#v1.11.1
+#v1.13.10
 if [ "$EUID" -ne 0 ]; then
     echo "请使用 root 用户运行此脚本。"
     exit 1
 fi
 LOG_DIR="/var/log/ATAsst"
+if [ ! -d "$LOG_DIR" ]; then
+    mkdir -p "$LOG_DIR" || { echo "无法创建日志目录 $LOG_DIR"; exit 1; }
+fi
+chmod 755 "$LOG_DIR" || { echo "设置日志目录权限失败 $LOG_DIR"; exit 1; }
 LOG_FILE="$LOG_DIR/AT_install.log"
 
 function log_message() {
