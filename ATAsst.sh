@@ -19,12 +19,17 @@ true > "$LOG_FILE"
 
 log_message "===== 开始安装脚本 ====="
 
+if [ "$(id -u)" -ne 0 ]; then
+    log_message "错误：安装 sudo 需要 root 权限，请切换到 root 用户后重试"
+    exit 1
+fi
+
 if ! command -v sudo &> /dev/null; then
     log_message "未检测到 sudo，正在安装..."
     if [ -x "$(command -v apt-get)" ]; then
-        sudo apt-get update && sudo apt-get install -y sudo || { log_message "安装 sudo 失败！"; exit 1; }
+        apt-get update && apt-get install -y sudo || { log_message "安装 sudo 失败！"; exit 1; }
     elif [ -x "$(command -v yum)" ]; then
-        sudo yum install -y sudo || { log_message "安装 sudo 失败！"; exit 1; }
+        yum install -y sudo || { log_message "安装 sudo 失败！"; exit 1; }
     else
         log_message "无法通过 apt-get 或 yum 安装 sudo，请手动安装！"
         exit 1
