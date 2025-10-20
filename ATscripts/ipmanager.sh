@@ -56,7 +56,7 @@ else
     NET_MODE="unknown"
 fi
 
-echo -e "${YELLOW}检测到网络接口: $IFACE, 网络管理方式: ${GREEN}$NET_MODE${NC}"
+echo -e "${YELLOW}检测到网络接口: $IFACE${NC}"
 log "检测到网络接口: $IFACE, 网络管理方式: $NET_MODE"
 
 echo "当前检测到的网卡：$IFACE"
