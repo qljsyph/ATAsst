@@ -2,7 +2,7 @@
 # =========================================
 # 网络配置管理
 # =========================================
-#1.13.2
+#1.13.5
 # 颜色变量
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -10,22 +10,52 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 clear
-
-IFACE=$(ip -br link show | awk '{print $1}' | grep -v "lo" | head -n 1)
-[ -z "$IFACE" ] && { echo -e "${RED}未找到网络接口，程序退出${NC}"; exit 1; }
-
-# 日志配置
+# ==============================
+# 日志文件初始化与 log 函数
+# ==============================
 LOG_DIR="/var/log/ATAsst"
 LOG_FILE="$LOG_DIR/ipmanager.log"
 sudo mkdir -p "$LOG_DIR"
 sudo touch "$LOG_FILE"
-# 尝试把日志文件归当前用户（若无权限忽略）
-sudo chown "$(whoami)" "$LOG_FILE" 2>/dev/null || true
+sudo chown root:root "$LOG_FILE"
+sudo chmod 644 "$LOG_FILE"
 
+# 定义 log 函数
 log() {
     local msg="$*"
-    echo "$(date '+%F %T') $msg" >> "$LOG_FILE"
+    echo "$(date '+%F %T') $msg" | sudo tee -a "$LOG_FILE" > /dev/null
 }
+
+log_separator() {
+    echo "========================================================" | sudo tee -a "$LOG_FILE" > /dev/null
+    echo "$(date '+%F %T') --- 新的操作开始 ---" | sudo tee -a "$LOG_FILE" > /dev/null
+    echo "========================================================" | sudo tee -a "$LOG_FILE" > /dev/null
+}
+
+# ==============================
+# 日志轮换
+# ==============================
+if ! command -v logrotate >/dev/null 2>&1; then
+    echo "⚠️ logrotate 未安装，正在安装..."
+    sudo apt update
+    sudo apt install -y logrotate
+fi
+
+LOGROTATE_CONF="/etc/logrotate.d/ipmanager"
+sudo tee "$LOGROTATE_CONF" > /dev/null <<EOL
+$LOG_FILE {
+    daily
+    rotate 7
+    missingok
+    notifempty
+    create 644 root root
+}
+EOL
+
+log "logrotate 配置完成，文件: $LOGROTATE_CONF"
+
+log_separator
+log "网络管理器启动"
 
 # 全局 run_and_log 函数
 run_and_log() {
@@ -44,16 +74,266 @@ run_and_log() {
     fi
 }
 
-log "脚本启动"
+# 通用菜单循环函数
+menu_loop() {
+    local mode="$1"
+    local fn_static="$2"
+    local fn_dhcp="$3"
+    local fn_show="$4"
+    shift 4
+    local extra_opts=("$@")
+
+    while true; do
+        echo "=============================="
+        echo "         网络配置工具"
+        echo "=============================="
+        echo "1）设置静态 IP"
+        echo "2）切换为 DHCP 模式"
+        echo "3）查看当前网络配置"
+        local opt_idx=4
+        local opt_map=()
+        for extra in "${extra_opts[@]}"; do
+            local opt_label="${extra%%:*}"
+            local opt_fn="${extra#*:}"
+            echo "${opt_idx}）${opt_label}"
+            opt_map[$opt_idx]="$opt_fn"
+            ((opt_idx++))
+        done
+        echo "${opt_idx}）退出"
+        read -rp "请输入选项 [1-${opt_idx}]: " MENU_OPTION
+        case "$MENU_OPTION" in
+            1)
+                $fn_static
+                ;;
+            2)
+                $fn_dhcp
+                ;;
+            3)
+                $fn_show
+                ;;
+            *)  
+                if [[ $MENU_OPTION -ge 4 && $MENU_OPTION -lt $opt_idx ]]; then
+                    fn="${opt_map[$MENU_OPTION]}"
+                    if [ -n "$fn" ]; then
+                        $fn
+                    else
+                        echo "未知选项"
+                    fi
+                elif [[ $MENU_OPTION -eq $opt_idx ]]; then
+                    echo "已退出。"
+                    log "用户退出网络配置工具"
+                    exit 0
+                else
+                    echo -e "${RED}无效选项，请输入 1~${opt_idx}。${NC}"
+                fi
+                ;;
+        esac
+    done
+}
+#查看配置函数
+show_network_config() {
+    local mode="$1"       # "netplan" 或 "nmcli"
+    local iface="$2"
+    local con_name="$3"   # NMCLI模式传递连接名，否则可空
+
+    echo -e "${YELLOW}当前网络配置:${NC}"
+
+    if [ "$mode" = "netplan" ]; then
+        ip addr show "$iface" | grep "inet "
+        echo
+        echo -e "${YELLOW}默认网关:${NC}"
+        ip route show default
+        echo
+        echo -e "${YELLOW}DNS 服务器:${NC}"
+        grep 'nameserver' /etc/resolv.conf || echo "无 DNS 服务器配置"
+
+    elif [ "$mode" = "nmcli" ]; then
+        echo "连接名称：$con_name"
+        echo "网卡名称：$iface"
+        IPV4_METHOD=$(nmcli -g ipv4.method con show "$con_name" 2>/dev/null)
+        case "$IPV4_METHOD" in
+            manual) MODE_DESC="静态 IP";;
+            auto)   MODE_DESC="DHCP（自动）";;
+            disabled) MODE_DESC="IPv4 已禁用";;
+            *)      MODE_DESC="$IPV4_METHOD";;
+        esac
+        echo "IP 模式：$MODE_DESC"
+        nmcli dev show "$iface" | grep -E "IP4\.ADDRESS|IP4\.GATEWAY|IP4\.DNS" || true
+    fi
+
+    log "显示网络配置: $iface ($mode)"
+}
+
+cleanup() {
+    echo -e "\n${YELLOW}已中断，退出程序。${NC}"
+    log "用户中断脚本"
+    exit 130
+}
+trap cleanup INT TERM
+
+mapfile -t RAW_IFACES < <(ip -br link show | awk '{print $1}' | grep -v "^lo")
+
+declare -A DEV_PATHS
+declare -A MACS
+ALL_IFACES=()
+
+for IF in "${RAW_IFACES[@]}"; do
+    MAC=$(cat /sys/class/net/$IF/address 2>/dev/null | tr '[:upper:]' '[:lower:]')
+    DEV_PATH=$(readlink -f /sys/class/net/$IF/device 2>/dev/null)
+
+    if [[ -n "$MAC" && -n "${MACS[$MAC]}" ]]; then
+        continue
+    fi
+
+    if [[ -n "$DEV_PATH" && -n "${DEV_PATHS[$DEV_PATH]}" ]]; then
+        continue
+    fi
+
+    [[ -n "$MAC" ]] && MACS["$MAC"]=1
+    [[ -n "$DEV_PATH" ]] && DEV_PATHS["$DEV_PATH"]=1
+    ALL_IFACES+=("$IF")
+done
+
+#分类函数
+get_iface_type() {
+    local IF="$1"
+    local TYPE_FILE="/sys/class/net/$IF/type"
+
+    if [[ -d "/sys/class/net/$IF/wireless" ]]; then
+        echo "Wi-Fi"
+        return
+    fi
+
+    if [[ -f "$TYPE_FILE" ]]; then
+        case "$(cat "$TYPE_FILE")" in
+            1) echo "Ethernet" ;;
+            772) echo "Virtual" ;;
+            *) 
+                if [[ "$IF" == *"tun"* || "$IF" == *"tap"* || "$IF" == *"docker"* ]]; then
+                    echo "Virtual"
+                else
+                    echo "Unknown"
+                fi
+                ;;
+        esac
+    else
+        echo "Unknown"
+    fi
+}
+
+AUTO_SELECTED=false
+IFACE=""
+
+if [ ${#ALL_IFACES[@]} -eq 0 ]; then
+    echo -e "${RED}未找到任何网络接口，程序退出${NC}"
+    log "未找到任何网络接口，退出脚本"
+    exit 1
+elif [ ${#ALL_IFACES[@]} -eq 1 ]; then
+    IFACE="${ALL_IFACES[0]}"
+    TYPE=$(get_iface_type "$IFACE")
+    echo -e "${YELLOW}检测到单一网络接口：$IFACE [$TYPE]${NC}"
+    log "检测到单一网络接口: $IFACE [$TYPE]"
+    AUTO_SELECTED=true
+
+else
+    echo "检测到多个网络接口（物理去重 + 保留虚拟接口）："
+
+    # 接口角色判断函数
+    get_iface_role() {
+        local iface="$1"
+
+        if [[ "$iface" == br* || "$iface" == docker* || "$iface" == tun* || "$iface" == tap* || "$iface" == Meta* ]]; then
+            echo "Virtual"
+            return
+        fi
+
+        if ip route show default 2>/dev/null | grep -qw "dev $iface"; then
+            echo "WAN"
+            return
+        fi
+
+        if ip -4 addr show "$iface" 2>/dev/null | grep -qE 'inet (192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01]))'; then
+            echo "LAN"
+            return
+        fi
+
+        echo "Other"
+    }
+
+    # 循环显示接口和角色
+    i=1
+    for iface in "${ALL_IFACES[@]}"; do
+        type=$(get_iface_type "$iface")
+        role=$(get_iface_role "$iface")
+        printf "%d）%-12s [%s / %s]\n" "$i" "$iface" "$type" "$role"
+        ((i++))
+    done
+
+    AUTO_IFACE=""
+    for iface in "${ALL_IFACES[@]}"; do
+        role=$(get_iface_role "$iface")
+        if [[ "$role" == "WAN" ]]; then
+            AUTO_IFACE="$iface"
+            break
+        fi
+    done
+
+    if [[ -z "$AUTO_IFACE" ]]; then
+        for iface in "${ALL_IFACES[@]}"; do
+            [[ "$(get_iface_type "$iface")" == "Ethernet" ]] && AUTO_IFACE="$iface" && break
+        done
+    fi
+
+    if [[ -n "$AUTO_IFACE" ]]; then
+        echo
+        read -rp "检测到以太网接口 ${AUTO_IFACE}，是否自动选择？(Y/n): " yn
+        case $yn in
+            [Nn]*) ;;  # 用户拒绝，则继续手动选择
+            *) 
+                IFACE="$AUTO_IFACE"
+                TYPE=$(get_iface_type "$IFACE")
+                echo -e "${YELLOW}已自动选择网卡：$IFACE [$TYPE]${NC}"
+                log "自动选择网卡: $IFACE [$TYPE]"
+                AUTO_SELECTED=true
+                ;;
+        esac
+    fi
+
+    # 手动选择
+    if ! $AUTO_SELECTED; then
+        echo
+        read -rp "请选择要配置的网卡编号 [1-${#ALL_IFACES[@]}]: " SELECTED
+        IFACE="${ALL_IFACES[$((SELECTED-1))]}"
+        TYPE=$(get_iface_type "$IFACE")
+        echo -e "${YELLOW}已选择网卡：$IFACE [$TYPE]${NC}"
+        log "用户选择网卡: $IFACE [$TYPE]"
+    fi
+fi
+# 检测
+NETPLAN_RENDERER=""
+# 目标网卡的 Netplan
+NETPLAN_FILES=$(grep -rl "$IFACE" /etc/netplan/*.yaml 2>/dev/null)
+if [ -n "$NETPLAN_FILES" ] && grep -q "renderer:\s*NetworkManager" $NETPLAN_FILES 2>/dev/null; then
+    NETPLAN_RENDERER="NetworkManager"
+fi
 
 if command -v nmcli >/dev/null 2>&1 && systemctl is-active --quiet NetworkManager && nmcli device status | grep -qw "$IFACE"; then
-    NET_MODE="nmcli"
+    if [ "$NETPLAN_RENDERER" = "NetworkManager" ]; then
+        NET_MODE="nmcli"
+        log "Netplan+NetworkManager"
+    else
+        NET_MODE="nmcli"
+        log "NetworkManager"
+    fi
 elif grep -q "$IFACE" /etc/network/interfaces 2>/dev/null; then
     NET_MODE="interfaces"
+    log "interfaces"
 elif grep -qr "$IFACE" /etc/netplan/*.yaml 2>/dev/null; then
     NET_MODE="netplan"
+    log "Netplan"
 else
     NET_MODE="unknown"
+    log "无法确定网络管理方式"
 fi
 
 echo -e "${YELLOW}检测到网络接口: $IFACE${NC}"
@@ -75,24 +355,21 @@ if [ "$NET_MODE" = "interfaces" ]; then
     echo "=============================="
     echo -e "${YELLOW}检测到的网络接口是: $INTERFACE${NC}"
 
-    while true; do
-        echo "1）设置静态 IP"
-        echo "2）切换为 DHCP 模式"
-        echo "3）查看当前网络配置"
-        echo "4）退出"
-        read -p "请输入选项 [1-4]: " D_OPTION
+    set_if_static() {
+        read -rp "请输入静态 IP 地址: " IP_ADDRESS
+        read -rp "请输入子网掩码（例如 255.255.255.0）: " NETMASK
+        if ! [[ "$NETMASK" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+            echo "❌ 子网掩码格式不正确，使用默认 255.255.255.0"
+            NETMASK="255.255.255.0"
+        fi
+        read -rp "请输入网关地址: " GATEWAY
+        read -rp "请输入 DNS 服务器地址 (多个地址用空格分隔): " DNS_SERVERS
+        log "用户选择设置静态 IP: IP=$IP_ADDRESS NETMASK=$NETMASK GATEWAY=$GATEWAY DNS=$DNS_SERVERS"
 
-        case "$D_OPTION" in
-            1)
-                read -rp "请输入静态 IP 地址: " IP_ADDRESS
-                read -rp "请输入网关地址: " GATEWAY
-                read -rp "请输入 DNS 服务器地址 (多个地址用空格分隔): " DNS_SERVERS
-                log "用户选择设置静态 IP: IP=$IP_ADDRESS GATEWAY=$GATEWAY DNS=$DNS_SERVERS"
+        INTERFACES_FILE="/etc/network/interfaces"
+        RESOLV_CONF_FILE="/etc/resolv.conf"
 
-                INTERFACES_FILE="/etc/network/interfaces"
-                RESOLV_CONF_FILE="/etc/resolv.conf"
-
-                cat > $INTERFACES_FILE <<EOL
+        cat > $INTERFACES_FILE <<EOL
 # The loopback network interface
 auto lo
 iface lo inet loopback
@@ -101,23 +378,33 @@ iface lo inet loopback
 allow-hotplug $INTERFACE
 iface $INTERFACE inet static
     address $IP_ADDRESS
-    netmask 255.255.255.0
+    netmask $NETMASK
     gateway $GATEWAY
 EOL
 
-                echo > $RESOLV_CONF_FILE
-                for dns in $DNS_SERVERS; do
-                    echo "nameserver $dns" >> $RESOLV_CONF_FILE
-                done
+        if [[ -L /etc/resolv.conf ]]; then
+            echo "⚠️ 检测到 systemd-resolved 管理 DNS，使用 resolvectl 设置"
+            log "systemd-resolved 管理 DNS，使用 resolvectl 设置: ${DNS_SERVERS[*]}"
+            for dns in $DNS_SERVERS; do
+                run_and_log "sudo resolvectl dns $INTERFACE $dns"
+            done
+            run_and_log "sudo resolvectl reconfigure"
+        else
+            echo > $RESOLV_CONF_FILE
+            for dns in $DNS_SERVERS; do
+                echo "nameserver $dns" >> $RESOLV_CONF_FILE
+                log "写入 DNS: $dns 到 $RESOLV_CONF_FILE"
+            done
+        fi
 
+        run_and_log "sudo systemctl restart networking"
+        echo -e "${GREEN}静态 IP 地址和 DNS 配置完成！${NC}"
+    }
 
-                run_and_log "sudo systemctl restart networking"
-                echo -e "${GREEN}静态 IP 地址和 DNS 配置完成！${NC}"
-                ;;
-            2)
-                log "用户选择切换为 DHCP 模式"
-                INTERFACES_FILE="/etc/network/interfaces"
-                cat > $INTERFACES_FILE <<EOL
+    set_if_dhcp() {
+        log "用户选择切换为 DHCP 模式"
+        INTERFACES_FILE="/etc/network/interfaces"
+        cat > $INTERFACES_FILE <<EOL
 # The loopback network interface
 auto lo
 iface lo inet loopback
@@ -126,30 +413,23 @@ iface lo inet loopback
 allow-hotplug $INTERFACE
 iface $INTERFACE inet dhcp
 EOL
-                run_and_log "sudo systemctl restart networking"
-                echo -e "${GREEN}已切换为 DHCP 模式。${NC}"
-                ;;
-            3)
-                log "用户查看当前网络配置"
-                echo -e "${YELLOW}当前网络配置:${NC}"
-                ip addr show "$INTERFACE" | grep "inet "
-                echo
-                echo -e "${YELLOW}默认网关:${NC}"
-                ip route show default
-                echo
-                echo -e "${YELLOW}DNS 服务器:${NC}"
-                grep 'nameserver' /etc/resolv.conf
-                ;;
-            4)
-                log "用户退出 Debian 网络配置工具"
-                echo "已退出。"
-                exit 0
-                ;;
-            *)
-                echo -e "${RED}无效选项，请输入 1~4。${NC}"
-                ;;
-        esac
-    done
+        run_and_log "sudo systemctl restart networking"
+        echo -e "${GREEN}已切换为 DHCP 模式。${NC}"
+    }
+
+    show_network_config_interfaces() {
+        log "用户查看当前网络配置"
+        echo -e "${YELLOW}当前网络配置:${NC}"
+        ip addr show "$INTERFACE" | grep "inet "
+        echo
+        echo -e "${YELLOW}默认网关:${NC}"
+        ip route show default
+        echo
+        echo -e "${YELLOW}DNS 服务器:${NC}"
+        grep 'nameserver' /etc/resolv.conf
+    }
+
+    menu_loop "interfaces" set_if_static set_if_dhcp show_network_config_interfaces
 
 elif [ "$NET_MODE" = "netplan" ]; then
     log "检测到 Netplan 配置，使用 Netplan 模式"
@@ -191,43 +471,15 @@ elif [ "$NET_MODE" = "netplan" ]; then
         fi
     }
 
-    show_current_netplan_config() {
-        echo -e "${YELLOW}当前网络配置:${NC}"
-        ip addr show "$INTERFACE" | grep "inet "
-        echo
-        echo -e "${YELLOW}默认网关:${NC}"
-        ip route show default
-        echo
-        echo -e "${YELLOW}DNS 服务器:${NC}"
-        grep 'nameserver' /etc/resolv.conf || echo "无 DNS 服务器配置"
-    }
+    set_netplan_static() {
+        read -rp "请输入静态 IP 地址（带CIDR，例如 192.168.1.100/24）: " IP_CIDR
+        read -rp "请输入网关地址: " GATEWAY
+        read -rp "请输入 DNS 服务器地址 (多个用空格分隔): " DNS_SERVERS
+        log "用户选择设置静态 IP: IP=$IP_CIDR GATEWAY=$GATEWAY DNS=$DNS_SERVERS"
 
+        BACKUP_FILE=$(backup_netplan)
 
-    while true; do
-        echo "1）设置静态 IP"
-        echo "2）切换为 DHCP"
-        echo "3）查看当前网络配置"
-        echo "4）恢复最近备份"
-        echo "5）退出"
-        read -p "请输入选项 [1-5]: " N_OPTION
-
-        case "$N_OPTION" in
-            1)
-                read -rp "请输入静态 IP 地址（带CIDR，例如 192.168.1.100/24）: " IP_CIDR
-                read -rp "请输入网关地址: " GATEWAY
-                read -rp "请输入 DNS 服务器地址 (多个用空格分隔): " DNS_SERVERS
-                log "用户选择设置静态 IP: IP=$IP_CIDR GATEWAY=$GATEWAY DNS=$DNS_SERVERS"
-
-                BACKUP_FILE=$(backup_netplan)
-
-                # 生成 DNS 列表
-                DNS_YAML=""
-                for dns in $DNS_SERVERS; do
-                    DNS_YAML+="      - $dns\n"
-                done
-
-                # 写入配置文件
-                sudo tee "$CONFIG_FILE" > /dev/null <<EOL
+        sudo tee "$CONFIG_FILE" > /dev/null <<EOL
 network:
   version: 2
   renderer: networkd
@@ -236,33 +488,36 @@ network:
       dhcp4: no
       addresses:
         - $IP_CIDR
-      gateway4: $GATEWAY
+      routes:
+        - to: default
+          via: $GATEWAY
       nameservers:
         addresses:
-$(echo -e "$DNS_YAML")
+$(for dns in $DNS_SERVERS; do echo "          - $dns"; done)  
 EOL
 
-                if ! sudo netplan try --timeout 5; then
-                    echo -e "${RED}配置验证失败，正在恢复备份...${NC}"
-                    log "netplan try 验证失败，恢复备份"
-                    restore_netplan "$BACKUP_FILE"
-                    continue
-                fi
+        if ! sudo netplan try --timeout 15; then
+            echo -e "${RED}配置验证失败，正在恢复备份...${NC}"
+            log "netplan try 验证失败，恢复备份"
+            restore_netplan "$BACKUP_FILE"
+            return
+        fi
 
-                if run_and_log "sudo netplan apply"; then
-                    echo -e "${GREEN}静态 IP 配置已应用！${NC}"
-                else
-                    echo -e "${RED}应用配置失败，正在恢复备份...${NC}"
-                    log "netplan apply 失败，恢复备份"
-                    restore_netplan "$BACKUP_FILE"
-                fi
-                ;;
-            2)
-                log "用户选择切换为 DHCP 模式"
+        if run_and_log "sudo netplan apply"; then
+            echo -e "${GREEN}静态 IP 配置已应用！${NC}"
+        else
+            echo -e "${RED}应用配置失败，正在恢复备份...${NC}"
+            log "netplan apply 失败，恢复备份"
+            restore_netplan "$BACKUP_FILE"
+        fi
+    }
 
-                BACKUP_FILE=$(backup_netplan)
+    set_netplan_dhcp() {
+        log "用户选择切换为 DHCP 模式"
 
-                sudo tee "$CONFIG_FILE" > /dev/null <<EOL
+        BACKUP_FILE=$(backup_netplan)
+
+        sudo tee "$CONFIG_FILE" > /dev/null <<EOL
 network:
   version: 2
   renderer: networkd
@@ -271,45 +526,39 @@ network:
       dhcp4: yes
 EOL
 
-                if run_and_log "sudo netplan apply"; then
-                    echo -e "${GREEN}已切换为 DHCP 模式。${NC}"
-                else
-                    echo -e "${RED}应用配置失败，正在恢复备份...${NC}"
-                    log "netplan apply 失败，恢复备份"
-                    restore_netplan "$BACKUP_FILE"
-                fi
-                ;;
-            3)
-                log "用户查看当前网络配置"
-                show_current_netplan_config
-                ;;
-            4)
-                log "用户选择恢复最近备份"
-                LATEST_BACKUP=$(ls -t ${CONFIG_FILE}.bak-* 2>/dev/null | head -n 1)
-                if [ -z "$LATEST_BACKUP" ]; then
-                    echo -e "${RED}未找到备份文件，无法恢复。${NC}"
-                    log "未找到备份文件，恢复失败"
-                else
-                    echo "恢复备份文件：$LATEST_BACKUP ? [y/N]"
-                    read -r confirm
-                    if [[ "$confirm" =~ ^[Yy]$ ]]; then
-                        restore_netplan "$LATEST_BACKUP"
-                    else
-                        echo "取消恢复备份。"
-                        log "用户取消恢复备份"
-                    fi
-                fi
-                ;;
-            5)
-                log "用户退出 Netplan 网络配置工具"
-                echo "已退出。"
-                exit 0
-                ;;
-            *)
-                echo -e "${RED}无效选项，请输入 1~5。${NC}"
-                ;;
-        esac
-    done
+        if run_and_log "sudo netplan apply"; then
+            echo -e "${GREEN}已切换为 DHCP 模式。${NC}"
+        else
+            echo -e "${RED}应用配置失败，正在恢复备份...${NC}"
+            log "netplan apply 失败，恢复备份"
+            restore_netplan "$BACKUP_FILE"
+        fi
+    }
+
+    show_network_config_netplan() {
+        log "用户查看当前网络配置"
+        show_network_config "netplan" "$INTERFACE"
+    }
+
+    restore_latest_backup() {
+        log "用户选择恢复最近备份"
+        LATEST_BACKUP=$(ls -t ${CONFIG_FILE}.bak-* 2>/dev/null | head -n 1)
+        if [ -z "$LATEST_BACKUP" ]; then
+            echo -e "${RED}未找到备份文件，无法恢复。${NC}"
+            log "未找到备份文件，恢复失败"
+        else
+            echo "恢复备份文件：$LATEST_BACKUP ? [y/N]"
+            read -r confirm
+            if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                restore_netplan "$LATEST_BACKUP"
+            else
+                echo "取消恢复备份。"
+                log "用户取消恢复备份"
+            fi
+        fi
+    }
+
+    menu_loop "netplan" set_netplan_static set_netplan_dhcp show_network_config_netplan "恢复最近备份:restore_latest_backup"
 
 elif [ "$NET_MODE" = "nmcli" ]; then
 
@@ -320,6 +569,10 @@ elif [ "$NET_MODE" = "nmcli" ]; then
         echo "⚙️ 自动检测到 NetworkManager 实际使用接口：$NM_IFACE"
         log "修正接口名称: $IFACE → $NM_IFACE (由 NetworkManager 管理)"
         IFACE="$NM_IFACE"
+        # 更新接口角色
+        ROLE=$(get_iface_role "$IFACE")
+        echo -e "${YELLOW}已使用的网络接口: $IFACE [角色: $ROLE]${NC}"
+        log "自动识别 NetworkManager 接口: $IFACE, 角色: $ROLE"
     fi
 
     echo "=============================="
@@ -347,7 +600,7 @@ elif [ "$NET_MODE" = "nmcli" ]; then
         echo "⚠️ 未自动检测到 $IFACE 的连接配置"
         echo "请从下面的列表中输入完整的连接名称（注意空格和大小写）："
         sudo nmcli --color yes con show | tee -a "$LOG_FILE"
-        read -p "连接名称: " CON_NAME
+        read -rp "连接名称: " CON_NAME
 
         if ! sudo nmcli con show "$CON_NAME" &>/dev/null; then
             echo "❌ 连接 '$CON_NAME' 不存在，退出脚本"
@@ -372,134 +625,91 @@ elif [ "$NET_MODE" = "nmcli" ]; then
 
     echo ">>> 正在查找网络连接..."
     echo "可用的网络连接列表："
-    sudo nmcli --color yes con show | tee -a "$LOG_FILE" 
+    sudo nmcli --color yes con show | tee -a "$LOG_FILE"
     echo
 
-    # 主菜单
-    while true; do
-        echo "请选择操作："
-        echo "1）设置静态 IP"
-        echo "2）切换为 DHCP（自动获取IP）"
-        echo "3）查看当前网络配置"
-        echo "4）重新检测网络连接"
-        echo "5）退出"
-        read -p "请输入选项 [1-5]: " OPTION
+    set_nmcli_static() {
+        echo ">>> 设置静态 IP 模式"
+        read -rp "请输入新的IP地址（例如 192.168.1.100）: " IP_ADDR
+        read -rp "请输入子网掩码CIDR（例如 24 表示255.255.255.0）: " MASK
+        read -rp "请输入网关地址（例如 192.168.1.1）: " GATEWAY
+        read -rp "请输入主DNS（例如 223.5.5.5）: " DNS1
+        read -rp "请输入备用DNS（可留空）: " DNS2
+
+        log "设置静态IP: IP=$IP_ADDR/$MASK GATEWAY=$GATEWAY DNS1=$DNS1 DNS2=$DNS2"
+
         echo
+        echo ">>> 正在应用静态IP配置..."
 
-        case "$OPTION" in
-        1)
-            echo ">>> 设置静态 IP 模式"
-            read -p "请输入新的IP地址（例如 192.168.1.100）: " IP_ADDR
-            read -p "请输入子网掩码CIDR（例如 24 表示255.255.255.0）: " MASK
-            read -p "请输入网关地址（例如 192.168.1.1）: " GATEWAY
-            read -p "请输入主DNS（例如 223.5.5.5）: " DNS1
-            read -p "请输入备用DNS（可留空）: " DNS2
+        if [ -n "$DNS2" ]; then
+            DNS_PARAM="$DNS1 $DNS2"
+        else
+            DNS_PARAM="$DNS1"
+        fi
 
-            log "设置静态IP: IP=$IP_ADDR/$MASK GATEWAY=$GATEWAY DNS1=$DNS1 DNS2=$DNS2"
+        if run_and_log "sudo nmcli con mod \"${CON_NAME}\" \
+            ipv4.method manual \
+            ipv4.addresses \"${IP_ADDR}/${MASK}\" \
+            ipv4.gateway \"${GATEWAY}\" \
+            ipv4.dns \"${DNS_PARAM}\" \
+            ipv4.ignore-auto-dns yes \
+            connection.autoconnect yes"; then
+
+            echo ">>> 配置已应用，正在重启网络连接..."
+            log "已修改连接配置，尝试下线再上线连接: $CON_NAME"
+            run_and_log "sudo nmcli con down \"${CON_NAME}\""
+            sleep 1
+            run_and_log "sudo nmcli con up \"${CON_NAME}\""
 
             echo
-            echo ">>> 正在应用静态IP配置..."
+            echo "✅ 静态IP设置完成！当前网络信息："
+            sleep 2
+            show_network_config "nmcli" "$IFACE" "$CON_NAME"
+            log "静态IP设置完成，显示当前网络信息"
+        else
+            echo "❌ 配置失败，请检查输入参数"
+            log "静态IP配置失败"
+        fi
+    }
 
-            if [ -n "$DNS2" ]; then
-                DNS_PARAM="$DNS1 $DNS2"
-            else
-                DNS_PARAM="$DNS1"
-            fi
+    set_nmcli_dhcp() {
+        echo ">>> 正在切换为 DHCP 模式..."
+        log "切换为 DHCP 模式"
+        if run_and_log "sudo nmcli con mod \"${CON_NAME}\" \
+            ipv4.method auto \
+            ipv4.gateway \"\" \
+            ipv4.dns \"\" \
+            ipv4.ignore-auto-dns no \
+            connection.autoconnect yes"; then
 
-            if run_and_log "sudo nmcli con mod \"${CON_NAME}\" \
-                ipv4.method manual \
-                ipv4.addresses \"${IP_ADDR}/${MASK}\" \
-                ipv4.gateway \"${GATEWAY}\" \
-                ipv4.dns \"${DNS_PARAM}\" \
-                ipv4.ignore-auto-dns yes \
-                connection.autoconnect yes"; then
+            run_and_log "sudo nmcli con down \"${CON_NAME}\""
+            sleep 1
+            run_and_log "sudo nmcli con up \"${CON_NAME}\""
 
-                echo ">>> 配置已应用，正在重启网络连接..."
-                log "已修改连接配置，尝试下线再上线连接: $CON_NAME"
-                run_and_log "sudo nmcli con down \"${CON_NAME}\""
-                sleep 1
-                run_and_log "sudo nmcli con up \"${CON_NAME}\""
-
-                echo
-                echo "✅ 静态IP设置完成！当前网络信息："
-                sleep 2
-                nmcli dev show "$IFACE" | tee -a "$LOG_FILE" | grep -E "IP4\.ADDRESS|IP4\.GATEWAY|IP4\.DNS"
-                log "静态IP设置完成，显示当前网络信息"
-            else
-                echo "❌ 配置失败，请检查输入参数"
-                log "静态IP配置失败"
-            fi
-            ;;
-        2)
-            echo ">>> 正在切换为 DHCP 模式..."
-            log "切换为 DHCP 模式"
-            if run_and_log "sudo nmcli con mod \"${CON_NAME}\" \
-                ipv4.method auto \
-                ipv4.gateway \"\" \
-                ipv4.dns \"\" \
-                ipv4.ignore-auto-dns no \
-                connection.autoconnect yes"; then
-
-                run_and_log "sudo nmcli con down \"${CON_NAME}\""
-                sleep 1
-                run_and_log "sudo nmcli con up \"${CON_NAME}\""
-
-                echo
-                echo "✅ 已切换为 DHCP 模式！当前网络信息："
-                sleep 2
-                nmcli dev show "$IFACE" | tee -a "$LOG_FILE" | grep -E "IP4\.ADDRESS|IP4\.GATEWAY|IP4\.DNS"
-                log "切换为 DHCP 完成，显示当前网络信息"
-            else
-                echo "❌ 切换失败"
-                log "切换为 DHCP 失败"
-            fi
             echo
-            ;;
-        3)
-            echo ">>> 当前网络配置如下："
-            echo "连接名称：$CON_NAME"
-            echo "网卡名称：$IFACE"
-            echo
+            echo "✅ 已切换为 DHCP 模式！当前网络信息："
+            sleep 2
+            show_network_config "nmcli" "$IFACE" "$CON_NAME"
+            log "切换为 DHCP 完成，显示当前网络信息"
+        else
+            echo "❌ 切换失败"
+            log "切换为 DHCP 失败"
+        fi
+        echo
+    }
 
-            log "查看当前网络配置: $CON_NAME on $IFACE"
-            # 获取并显示 ipv4.method（判断是静态还是 DHCP）
-            IPV4_METHOD=$(nmcli -g ipv4.method con show "$CON_NAME" 2>/dev/null)
-            if [ -z "$IPV4_METHOD" ]; then
-                IPV4_METHOD="未知"
-            fi
+    show_network_config_nmcli() {
+        echo ">>> 当前网络配置如下："
+        show_network_config "nmcli" "$IFACE" "$CON_NAME"
+    }
 
-            case "$IPV4_METHOD" in
-                manual) MODE_DESC="静态 IP";;
-                auto)   MODE_DESC="DHCP（自动）";;
-                disabled) MODE_DESC="IPv4 已禁用";;
-                *)      MODE_DESC="$IPV4_METHOD";;
-            esac
+    re_detect_nmcli() {
+        echo ">>> 重新检测网络连接..."
+        log "用户选择重新检测网络连接，重启脚本"
+        exec "$0"
+    }
 
-            echo "IP 模式：$MODE_DESC"
-            echo
-
-            nmcli con show "$CON_NAME" | tee -a "$LOG_FILE" | grep -E "ipv4\.(method|addresses|gateway|dns)" || true
-            echo
-            echo "实际IP信息："
-            nmcli dev show "$IFACE" | tee -a "$LOG_FILE" | grep -E "IP4\.ADDRESS|IP4\.GATEWAY|IP4\.DNS" || true
-            echo
-            log "显示完当前网络配置"
-            ;;
-        4)
-            echo ">>> 重新检测网络连接..."
-            log "用户选择重新检测网络连接，重启脚本"
-            exec "$0"
-            ;;
-        5)
-            echo "已退出。"
-            log "脚本退出"
-            exit 0
-            ;;
-        *)
-            echo "❌ 无效选项，请输入 1~5。"
-            ;;
-        esac
-    done
+    menu_loop "nmcli" set_nmcli_static set_nmcli_dhcp show_network_config_nmcli "重新检测网络连接:re_detect_nmcli"
 
 else
     echo -e "${RED}无法确定网络管理方式，当前接口: $IFACE${NC}"

@@ -18,6 +18,12 @@ function log_message() {
 
 log_message "===== 开始安装 ====="
 
+cleanup() {
+    echo -e "\n${YELLOW}已中断，退出程序。${NC}"
+    log_message "用户中断脚本"
+    exit 130
+}
+trap cleanup INT TERM
 
 if [ -f "/usr/local/bin/mihomo" ]; then
     log_message "/usr/local/bin/mihomo 已存在，是否删除？（y/n）"

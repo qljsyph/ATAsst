@@ -5,7 +5,7 @@ SCRIPTS_DIR="/etc/mihomo/scripts"
 LOG_DIR="/var/log/ATAsst"
 LOG_FILE="$LOG_DIR/AT_update.log"
 TEMP_DIR="/tmp/mihomo_update_temp"
-
+clear
 # 最大重试次数
 MAX_RETRIES=3
 

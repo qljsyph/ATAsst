@@ -1,5 +1,5 @@
 #!/bin/bash
-
+LOG_DIR="/var/log/ATAsst"
 function remove_mihomo_bin() {
     if [ -f "/usr/local/bin/mihomo" ]; then
         echo "正在删除核心"
@@ -33,9 +33,9 @@ function remove_mihomo_config() {
 }
 
 function remove_AT_install_log() {
-    if [ -f "/var/log/AT_install.log" ]; then
+    if [ -f "$LOG_DIR/AT_install.log" ]; then
         echo "正在删除脚本安装日志"
-        sudo rm -f /var/log/AT_install.log
+        sudo rm -f $LOG_DIR/AT_install.log
         echo "日志已删除"
     else
         echo "日志不存在，跳过删除"
@@ -43,9 +43,9 @@ function remove_AT_install_log() {
 }
 
 function remove_AT_update_log() {
-    if [ -f "/var/log/AT_update.log" ]; then
+    if [ -f "$LOG_DIR/AT_update.log" ]; then
         echo "正在删除 更新日志"
-        sudo rm -f /var/log/AT_update.log
+        sudo rm -f $LOG_DIR/AT_update.log
         echo "日志已删除"
     else
         echo "日志不存在，跳过删除"
@@ -53,9 +53,18 @@ function remove_AT_update_log() {
 }
 
 function remove_mihomo_install_log() {
-    if [ -f "/var/log/mihomo_install.log" ]; then
+    if [ -f "$LOG_DIR/mihomo_install.log" ]; then
         echo "正在删除 安装日志"
-        sudo rm -f /var/log/mihomo_install.log
+        sudo rm -f $LOG_DIR/mihomo_install.log
+        echo "日志已删除"
+    else
+        echo "日志不存在，跳过删除"
+    fi
+}
+function remove_ipmanager_log() {
+    if [ -f "$LOG_DIR/ipmanager.log" ]; then
+        echo "正在删除 网络管理器日志"
+        sudo rm -f $LOG_DIR/ipmanager.log
         echo "日志已删除"
     else
         echo "日志不存在，跳过删除"
@@ -71,6 +80,7 @@ function uninstall() {
     remove_AT_install_log
     remove_AT_update_log
     remove_mihomo_install_log
+    remove_ipmanager_log
 
     echo "卸载完成，返回主菜单..."
 }
