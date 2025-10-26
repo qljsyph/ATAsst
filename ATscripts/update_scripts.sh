@@ -178,3 +178,5 @@ log_message "===== 工具更新完成 ====="
 
 echo "工具更新完成！"
 
+log_message "重新加载"
+exec "$SCRIPTS_DIR/menu.sh"
