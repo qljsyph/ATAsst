@@ -2,7 +2,7 @@
 # =========================================
 # 网络配置管理
 # =========================================
-#1.13.5
+#1.13.6
 # 颜色变量
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -23,7 +23,7 @@ sudo chmod 644 "$LOG_FILE"
 # 定义 log 函数
 log() {
     local msg="$*"
-    echo "$(date '+%F %T') $msg" | sudo tee -a "$LOG_FILE" > /dev/null
+    echo "$(date '+%F %T') [cWxqc3lwaA==] $msg" | sudo tee -a "$LOG_FILE" > /dev/null
 }
 
 log_separator() {
@@ -221,8 +221,37 @@ get_iface_type() {
     fi
 }
 
+# 接口角色判断函数
+get_iface_role() {
+    local iface="$1"
+
+    if [[ "$iface" == br* || "$iface" == docker* || "$iface" == tun* || "$iface" == tap* || "$iface" == Meta* ]]; then
+        echo "Virtual"
+        return
+    fi
+
+    if ip route show default 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "dev") print $(i+1)}' | grep -Fxq "$iface"; then
+        echo "WAN"
+        return
+    fi
+
+    if ip -4 addr show "$iface" 2>/dev/null | grep -qE 'inet (192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01]))'; then
+        echo "LAN"
+        return
+    fi
+    # 未获取IP但属于物理以太网接口时，默认视为LAN管理口
+    if [[ "$(get_iface_type "$iface")" == "Ethernet" ]]; then
+        echo "LAN"
+        return
+    fi
+
+    echo "Other"
+}
+
 AUTO_SELECTED=false
+MANUAL_SELECTED=false
 IFACE=""
+ROLE=""
 
 if [ ${#ALL_IFACES[@]} -eq 0 ]; then
     echo -e "${RED}未找到任何网络接口，程序退出${NC}"
@@ -238,34 +267,16 @@ elif [ ${#ALL_IFACES[@]} -eq 1 ]; then
 else
     echo "检测到多个网络接口（物理去重 + 保留虚拟接口）："
 
-    # 接口角色判断函数
-    get_iface_role() {
-        local iface="$1"
-
-        if [[ "$iface" == br* || "$iface" == docker* || "$iface" == tun* || "$iface" == tap* || "$iface" == Meta* ]]; then
-            echo "Virtual"
-            return
-        fi
-
-        if ip route show default 2>/dev/null | grep -qw "dev $iface"; then
-            echo "WAN"
-            return
-        fi
-
-        if ip -4 addr show "$iface" 2>/dev/null | grep -qE 'inet (192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01]))'; then
-            echo "LAN"
-            return
-        fi
-
-        echo "Other"
-    }
-
     # 循环显示接口和角色
     i=1
     for iface in "${ALL_IFACES[@]}"; do
         type=$(get_iface_type "$iface")
         role=$(get_iface_role "$iface")
-        printf "%d）%-12s [%s / %s]\n" "$i" "$iface" "$type" "$role"
+        if [[ "$role" == "Virtual" ]]; then
+            printf "%d）%-12s [%s / %s / 不建议修改]\n" "$i" "$iface" "$type" "$role"
+        else
+            printf "%d）%-12s [%s / %s]\n" "$i" "$iface" "$type" "$role"
+        fi
         ((i++))
     done
 
@@ -292,8 +303,9 @@ else
             *) 
                 IFACE="$AUTO_IFACE"
                 TYPE=$(get_iface_type "$IFACE")
-                echo -e "${YELLOW}已自动选择网卡：$IFACE [$TYPE]${NC}"
-                log "自动选择网卡: $IFACE [$TYPE]"
+                ROLE=$(get_iface_role "$IFACE")
+                echo -e "${YELLOW}已自动选择网卡：$IFACE [$TYPE / $ROLE]${NC}"
+                log "自动选择网卡: $IFACE [$TYPE / $ROLE]"
                 AUTO_SELECTED=true
                 ;;
         esac
@@ -304,11 +316,31 @@ else
         echo
         read -rp "请选择要配置的网卡编号 [1-${#ALL_IFACES[@]}]: " SELECTED
         IFACE="${ALL_IFACES[$((SELECTED-1))]}"
+        MANUAL_SELECTED=true
         TYPE=$(get_iface_type "$IFACE")
+        ROLE=$(get_iface_role "$IFACE")
+
+        if [[ "$ROLE" == "Virtual" ]]; then
+            echo -e "${RED}⚠️ 检测到虚拟接口（如 Docker/VPN/TUN），不建议修改。${NC}"
+            read -rp "仍然继续？[y/N]: " CONTINUE_VIRTUAL
+
+            if [[ ! "$CONTINUE_VIRTUAL" =~ ^[Yy]$ ]]; then
+                echo "已取消选择，重新启动检测。"
+                log "用户取消选择虚拟接口: $IFACE"
+                exec "$0"
+            fi
+        fi
+
         echo -e "${YELLOW}已选择网卡：$IFACE [$TYPE]${NC}"
         log "用户选择网卡: $IFACE [$TYPE]"
     fi
 fi
+
+TYPE=$(get_iface_type "$IFACE")
+ROLE=$(get_iface_role "$IFACE")
+echo -e "${YELLOW}接口角色：$ROLE${NC}"
+log "最终选择网卡: $IFACE [$TYPE / $ROLE]"
+
 NETPLAN_RENDERER=""
 # 目标网卡的 Netplan
 NETPLAN_FILES=$(grep -rl "$IFACE" /etc/netplan/*.yaml 2>/dev/null)
@@ -569,7 +601,7 @@ elif [ "$NET_MODE" = "nmcli" ]; then
     log "检测到 NetworkManager 管理模式"
 
     NM_IFACE=$(nmcli -t -f DEVICE,STATE device | grep ":connected$" | cut -d':' -f1 | head -n1)
-    if [ -n "$NM_IFACE" ] && ! nmcli device | awk '{print $1}' | grep -qw "$IFACE"; then
+    if [ "$MANUAL_SELECTED" != "true" ] && [ -n "$NM_IFACE" ]; then
         echo "⚙️ 自动检测到 NetworkManager 实际使用接口：$NM_IFACE"
         log "修正接口名称: $IFACE → $NM_IFACE (由 NetworkManager 管理)"
         IFACE="$NM_IFACE"
@@ -588,7 +620,7 @@ elif [ "$NET_MODE" = "nmcli" ]; then
         CON_NAME=$(nmcli -t -f NAME,DEVICE con show | grep ":$IFACE$" | cut -d':' -f1 | head -n1)
     fi
 
-    if [ -z "$CON_NAME" ]; then
+    if [ -z "$CON_NAME" ] && [ "$MANUAL_SELECTED" != "true" ]; then
         NM_ACTIVE_DEV=$(nmcli -t -f DEVICE,STATE device | grep ":connected$" | cut -d':' -f1 | head -n1)
         if [ -n "$NM_ACTIVE_DEV" ]; then
             CON_NAME=$(nmcli -t -f NAME,DEVICE con show | grep ":$NM_ACTIVE_DEV$" | cut -d':' -f1 | head -n1)
@@ -596,6 +628,10 @@ elif [ "$NET_MODE" = "nmcli" ]; then
                 echo "⚙️ 自动检测到设备 $NM_ACTIVE_DEV 的连接：$CON_NAME"
                 log "自动检测到设备 $NM_ACTIVE_DEV 的连接：$CON_NAME"
                 IFACE="$NM_ACTIVE_DEV"
+                TYPE=$(get_iface_type "$IFACE")
+                ROLE=$(get_iface_role "$IFACE")
+                echo -e "${YELLOW}已切换到连接设备: $IFACE [角色: $ROLE]${NC}"
+                log "切换到连接设备: $IFACE [$TYPE / $ROLE]"
             fi
         fi
     fi
@@ -655,15 +691,24 @@ elif [ "$NET_MODE" = "nmcli" ]; then
             ipv4.method manual \
             ipv4.addresses \"${IP_ADDR}/${MASK}\" \
             ipv4.gateway \"${GATEWAY}\" \
+            ipv4.never-default yes \
             ipv4.dns \"${DNS_PARAM}\" \
             ipv4.ignore-auto-dns yes \
             connection.autoconnect yes"; then
 
-            echo ">>> 配置已应用，正在重启网络连接..."
-            log "已修改连接配置，尝试下线再上线连接: $CON_NAME"
-            run_and_log "sudo nmcli con down \"${CON_NAME}\""
-            sleep 1
-            run_and_log "sudo nmcli con up \"${CON_NAME}\""
+            echo
+            read -rp "是否立即应用配置？[y/N]: " APPLY_NOW
+
+            if [[ "$APPLY_NOW" =~ ^[Yy]$ ]]; then
+                echo ">>> 配置已应用，正在重启网络连接..."
+                log "已修改连接配置，尝试下线再上线连接: $CON_NAME"
+                run_and_log "sudo nmcli con down \"${CON_NAME}\""
+                sleep 1
+                run_and_log "sudo nmcli con up \"${CON_NAME}\""
+            else
+                echo "ℹ️ 配置已保存，但未立即应用"
+                log "配置已保存但未立即应用: $CON_NAME"
+            fi
 
             echo
             echo "✅ 静态IP设置完成！当前网络信息："
@@ -682,13 +727,22 @@ elif [ "$NET_MODE" = "nmcli" ]; then
         if run_and_log "sudo nmcli con mod \"${CON_NAME}\" \
             ipv4.method auto \
             ipv4.gateway \"\" \
+            ipv4.never-default yes \
             ipv4.dns \"\" \
             ipv4.ignore-auto-dns no \
             connection.autoconnect yes"; then
 
-            run_and_log "sudo nmcli con down \"${CON_NAME}\""
-            sleep 1
-            run_and_log "sudo nmcli con up \"${CON_NAME}\""
+            echo
+            read -rp "是否立即应用 DHCP 配置？[y/N]: " APPLY_NOW
+
+            if [[ "$APPLY_NOW" =~ ^[Yy]$ ]]; then
+                run_and_log "sudo nmcli con down \"${CON_NAME}\""
+                sleep 1
+                run_and_log "sudo nmcli con up \"${CON_NAME}\""
+            else
+                echo "ℹ️ DHCP 配置已保存，但未立即应用"
+                log "DHCP 配置已保存但未立即应用: $CON_NAME"
+            fi
 
             echo
             echo "✅ 已切换为 DHCP 模式！当前网络信息："
@@ -707,13 +761,214 @@ elif [ "$NET_MODE" = "nmcli" ]; then
         show_network_config "nmcli" "$IFACE" "$CON_NAME"
     }
 
+    activate_saved_connection() {
+        echo ">>> 正在应用并启动已保存的网络配置：$CON_NAME"
+        log "用户手动激活连接: $CON_NAME"
+
+        echo -e "${YELLOW}提示：该操作会立即启用当前网卡配置，可能导致网络中断或 IP 变化。${NC}"
+        read -rp "确认继续？[y/N]: " CONFIRM_APPLY
+
+        if [[ ! "$CONFIRM_APPLY" =~ ^[Yy]$ ]]; then
+            echo "已取消应用网络配置。"
+            log "用户取消应用网络配置: $CON_NAME"
+            echo
+            return
+        fi
+
+        if run_and_log "sudo nmcli con up \"${CON_NAME}\""; then
+            echo
+            echo -e "${GREEN}✅ 已成功应用并启动网络配置！${NC}"
+            sleep 2
+            show_network_config "nmcli" "$IFACE" "$CON_NAME"
+        else
+            echo -e "${RED}❌ 连接激活失败，请检查网线或配置${NC}"
+            log "连接激活失败: $CON_NAME"
+        fi
+
+        echo
+    }
+
+    restore_lan_default() {
+        if [[ "$ROLE" != "LAN" ]]; then
+            echo -e "${RED}⚠️ 当前接口不是 LAN，禁止执行恢复默认配置。${NC}"
+            log "禁止对非LAN接口执行恢复默认配置: $IFACE [$ROLE]"
+            echo
+            return
+        fi
+
+        echo -e "${YELLOW}>>> 正在恢复 LAN 管理口默认配置...${NC}"
+        echo "默认配置："
+        echo "IP: 未分配"
+        echo "网关: 无"
+        echo "DNS: 无"
+        echo
+
+        read -rp "确认恢复默认 LAN 配置？[y/N]: " CONFIRM_RESET
+
+        if [[ ! "$CONFIRM_RESET" =~ ^[Yy]$ ]]; then
+            echo "已取消恢复默认配置。"
+            log "用户取消恢复默认LAN配置: $CON_NAME"
+            echo
+            return
+        fi
+
+        if run_and_log "sudo nmcli con mod \"${CON_NAME}\" \
+            ipv4.method disabled \
+            ipv4.addresses \"\" \
+            ipv4.gateway \"\" \
+            ipv4.never-default yes \
+            ipv4.dns \"\" \
+            ipv4.ignore-auto-dns yes \
+            connection.autoconnect yes"; then
+
+            echo
+            echo -e "${GREEN}✅ 已恢复 LAN 默认配置！${NC}"
+            echo
+            read -rp "是否立即应用配置？[y/N]: " APPLY_DEFAULT
+
+            if [[ "$APPLY_DEFAULT" =~ ^[Yy]$ ]]; then
+                run_and_log "sudo nmcli con down \"${CON_NAME}\""
+                sleep 1
+                run_and_log "sudo nmcli con up \"${CON_NAME}\""
+            else
+                echo "ℹ️ 配置已保存，但未立即应用"
+            fi
+
+            echo
+            show_network_config "nmcli" "$IFACE" "$CON_NAME"
+            log "已恢复LAN默认配置: $CON_NAME"
+        else
+            echo -e "${RED}❌ 恢复默认配置失败${NC}"
+            log "恢复LAN默认配置失败: $CON_NAME"
+        fi
+
+        echo
+    }
+
+    rebuild_lan_connection() {
+        if [[ "$ROLE" != "LAN" ]]; then
+            echo -e "${RED}⚠️ 当前接口不是 LAN，禁止执行救灾重建。${NC}"
+            log "禁止对非LAN接口执行救灾重建: $IFACE [$ROLE]"
+            echo
+            return
+        fi
+
+        echo -e "${RED}⚠️ 救灾模式：将删除当前网络连接并重新创建。${NC}"
+        echo "可能导致："
+        echo "- connection 名称变化"
+        echo "- IP 配置丢失"
+        echo "- 网络短暂中断"
+        echo
+
+        read -rp "请输入 RESET 确认执行救灾重建: " DISASTER_CONFIRM
+
+        if [[ "$DISASTER_CONFIRM" != "RESET" ]]; then
+            echo "已取消救灾重建。"
+            log "用户取消LAN救灾重建: $CON_NAME"
+            echo
+            return
+        fi
+
+        OLD_CON_NAME="$CON_NAME"
+        NEW_CON_NAME=""
+
+        WAN_IFACE=$(ip route show default 2>/dev/null | awk '/default/ {for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -n1)
+        WAN_CON_NAME=$(nmcli -t -f NAME,DEVICE con show | grep ":$WAN_IFACE$" | cut -d':' -f1 | head -n1)
+
+        if [[ -n "$WAN_CON_NAME" ]]; then
+            echo "检测到当前 WAN 连接：$WAN_CON_NAME ($WAN_IFACE)"
+            echo "救灾模式仅会操作 LAN，不会修改 WAN 配置。"
+            log "检测到WAN连接，保护WAN配置: $WAN_CON_NAME [$WAN_IFACE]"
+        fi
+
+        if [[ "$OLD_CON_NAME" == "$WAN_CON_NAME" ]]; then
+            echo -e "${RED}❌ 安全保护：禁止删除当前 WAN 连接！${NC}"
+            log "阻止删除WAN连接: $OLD_CON_NAME"
+            echo
+            return
+        fi
+
+        echo ">>> 删除旧连接配置: $OLD_CON_NAME"
+
+        if run_and_log "sudo nmcli con delete \"${OLD_CON_NAME}\""; then
+            sleep 2
+
+            echo ">>> 尝试重新连接设备: $IFACE"
+
+            # 先尝试自动重建
+            if ! run_and_log "sudo nmcli device connect \"${IFACE}\""; then
+                echo "⚠️ 自动重建失败，尝试手动创建新的 Ethernet 连接..."
+                log "自动重建失败，开始手动创建连接: $IFACE"
+
+                NEW_CON_NAME="LAN-${IFACE}"
+
+                if run_and_log "sudo nmcli con add type ethernet ifname \"${IFACE}\" con-name \"${NEW_CON_NAME}\" autoconnect yes"; then
+                    echo "✅ 已手动创建新的 LAN 连接: $NEW_CON_NAME"
+                    log "手动创建LAN连接成功: $NEW_CON_NAME"
+                else
+                    echo -e "${RED}❌ 手动创建 LAN 连接失败${NC}"
+                    log "手动创建LAN连接失败: $IFACE"
+                    echo
+                    return
+                fi
+            fi
+
+            sleep 2
+
+            # 如果是手动创建的新连接，直接使用该连接名称
+            # 避免 LAN 未插网线(NO-CARRIER)时 DEVICE 显示为 -- 导致误判
+            if [[ -n "$NEW_CON_NAME" ]]; then
+                CON_NAME="$NEW_CON_NAME"
+                log "使用手动创建的LAN连接: $CON_NAME"
+            else
+                # 自动重建成功时重新获取连接名称
+                CON_NAME=$(nmcli -t -f NAME,DEVICE con show | grep ":$IFACE$" | cut -d':' -f1 | head -n1)
+
+                if [[ -z "$CON_NAME" ]]; then
+                    echo -e "${RED}❌ 未找到新生成的连接配置${NC}"
+                    log "未找到新生成的连接配置: $IFACE"
+                    echo
+                    return
+                fi
+            fi
+
+            echo -e "${GREEN}✅ LAN 网络连接已重建成功！${NC}"
+            echo "新的连接名称：$CON_NAME"
+            log "LAN连接重建成功: $IFACE -> $CON_NAME"
+
+            echo
+            show_network_config "nmcli" "$IFACE" "$CON_NAME"
+
+        else
+            echo -e "${RED}❌ 删除旧连接失败${NC}"
+            log "删除旧LAN连接失败: $OLD_CON_NAME"
+        fi
+
+        echo
+    }
+
     re_detect_nmcli() {
         echo ">>> 重新检测网络连接..."
         log "用户选择重新检测网络连接，重启脚本"
         exec "$0"
     }
 
-    menu_loop "nmcli" set_nmcli_static set_nmcli_dhcp show_network_config_nmcli "重新检测网络连接:re_detect_nmcli"
+    if [[ "$ROLE" == "LAN" ]]; then
+        menu_loop "nmcli" \
+            set_nmcli_static \
+            set_nmcli_dhcp \
+            show_network_config_nmcli \
+            "应用已保存配置:activate_saved_connection" \
+            "恢复 LAN 默认配置:restore_lan_default" \
+            "重建 LAN 连接（救灾）:rebuild_lan_connection" \
+            "重新检测网络连接:re_detect_nmcli"
+    else
+        menu_loop "nmcli" \
+            set_nmcli_static \
+            set_nmcli_dhcp \
+            show_network_config_nmcli \
+            "重新检测网络连接:re_detect_nmcli"
+    fi
 
 else
     echo -e "${RED}无法确定网络管理方式，当前接口: $IFACE${NC}"
