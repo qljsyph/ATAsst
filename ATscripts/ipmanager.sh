@@ -96,7 +96,7 @@ menu_loop() {
             local opt_label="${extra%%:*}"
             local opt_fn="${extra#*:}"
             echo "${opt_idx}）${opt_label}"
-            opt_map[$opt_idx]="$opt_fn"
+            opt_map[opt_idx]="$opt_fn"
             ((opt_idx++))
         done
         echo "${opt_idx}）退出"
@@ -472,7 +472,7 @@ elif [ "$NET_MODE" = "netplan" ]; then
     echo "=============================="
     echo "         网络配置工具"
     echo "=============================="
-    CONFIG_FILE=$(ls /etc/netplan/*.yaml 2>/dev/null | head -n 1)
+    CONFIG_FILE=$(find /etc/netplan -maxdepth 1 -type f -name '*.yaml' -print -quit 2>/dev/null)
     if [ -z "$CONFIG_FILE" ]; then
         echo -e "${RED}未找到 Netplan 配置文件，程序退出。${NC}"
         log "未找到 Netplan 配置文件，退出"
@@ -578,7 +578,7 @@ EOL
 
     restore_latest_backup() {
         log "用户选择恢复最近备份"
-        LATEST_BACKUP=$(ls -t "${CONFIG_FILE}".bak-* 2>/dev/null | head -n 1)
+        LATEST_BACKUP=$(find /etc/netplan -maxdepth 1 -type f -name "$(basename "$CONFIG_FILE").bak-*" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n 1 | cut -d' ' -f2-)
         if [ -z "$LATEST_BACKUP" ]; then
             echo -e "${RED}未找到备份文件，无法恢复。${NC}"
             log "未找到备份文件，恢复失败"
@@ -947,6 +947,98 @@ elif [ "$NET_MODE" = "nmcli" ]; then
         echo
     }
 
+    enable_lan_nat() {
+        LAN_IFACE="$IFACE"
+        WAN_IFACE=$(ip route show default 2>/dev/null | awk '/default/ {for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -n1)
+        LAN_CIDR=$(ip -o -4 addr show "$LAN_IFACE" 2>/dev/null | awk '{print $4; exit}')
+
+        if [[ -z "$WAN_IFACE" ]]; then
+            echo -e "${RED}❌ 未检测到 WAN 接口，无法开启 NAT${NC}"
+            log "开启LAN NAT失败: 未检测到WAN接口"
+            return
+        fi
+
+        if [[ -z "$LAN_CIDR" ]]; then
+            echo -e "${RED}❌ LAN 接口未分配 IPv4 地址，无法开启 NAT${NC}"
+            log "开启LAN NAT失败: LAN接口无IPv4地址 ($LAN_IFACE)"
+            return
+        fi
+
+        if [[ "$LAN_IFACE" == "$WAN_IFACE" ]]; then
+            echo -e "${RED}❌ LAN 与 WAN 接口相同，禁止开启 NAT${NC}"
+            log "开启LAN NAT失败: LAN/WAN 接口相同 ($LAN_IFACE)"
+            return
+        fi
+
+        echo -e "${YELLOW}>>> 正在开启 LAN 上网共享（NAT模式）...${NC}"
+        log "开启LAN NAT: LAN=$LAN_IFACE LAN_CIDR=$LAN_CIDR WAN=$WAN_IFACE"
+
+        if ! command -v iptables >/dev/null 2>&1; then
+            echo -e "${RED}❌ 未检测到 iptables，无法配置 NAT${NC}"
+            log "开启LAN NAT失败: 未检测到iptables"
+            return
+        fi
+
+        sudo sysctl -w net.ipv4.ip_forward=1 >/dev/null
+        echo "net.ipv4.ip_forward=1" | sudo tee /etc/sysctl.d/99-atasst-ipforward.conf >/dev/null
+
+        sudo iptables -t nat -N ATASST_LAN_NAT 2>/dev/null || sudo iptables -t nat -F ATASST_LAN_NAT
+        sudo iptables -N ATASST_LAN_FWD 2>/dev/null || sudo iptables -F ATASST_LAN_FWD
+
+        sudo iptables -t nat -C POSTROUTING -j ATASST_LAN_NAT 2>/dev/null || \
+        sudo iptables -t nat -A POSTROUTING -j ATASST_LAN_NAT
+
+        sudo iptables -C FORWARD -j ATASST_LAN_FWD 2>/dev/null || \
+        sudo iptables -I FORWARD 1 -j ATASST_LAN_FWD
+
+        sudo iptables -t nat -A ATASST_LAN_NAT -s "$LAN_CIDR" -o "$WAN_IFACE" -j MASQUERADE
+        sudo iptables -A ATASST_LAN_FWD -i "$LAN_IFACE" -o "$WAN_IFACE" -s "$LAN_CIDR" -j ACCEPT
+        sudo iptables -A ATASST_LAN_FWD -i "$WAN_IFACE" -o "$LAN_IFACE" -d "$LAN_CIDR" -m state --state RELATED,ESTABLISHED -j ACCEPT
+
+        echo -e "${GREEN}✅ LAN 已开启上网共享（NAT模式）${NC}"
+        echo "LAN接口: $LAN_IFACE"
+        echo "LAN网段: $LAN_CIDR"
+        echo "WAN接口: $WAN_IFACE"
+        log "LAN NAT开启成功: LAN=$LAN_IFACE LAN_CIDR=$LAN_CIDR WAN=$WAN_IFACE"
+    }
+
+    disable_lan_nat() {
+        LAN_IFACE="$IFACE"
+        WAN_IFACE=$(ip route show default 2>/dev/null | awk '/default/ {for(i=1;i<=NF;i++) if($i=="dev") print $(i+1)}' | head -n1)
+
+        echo -e "${YELLOW}>>> 正在切换为 LAN 仅管理模式（关闭转发）...${NC}"
+        log "关闭LAN NAT: LAN=$LAN_IFACE WAN=$WAN_IFACE"
+
+        if ! command -v iptables >/dev/null 2>&1; then
+            echo -e "${RED}❌ 未检测到 iptables，无法清理 NAT 规则${NC}"
+            log "关闭LAN NAT失败: 未检测到iptables"
+            return
+        fi
+
+        while sudo iptables -t nat -C POSTROUTING -j ATASST_LAN_NAT 2>/dev/null; do
+            sudo iptables -t nat -D POSTROUTING -j ATASST_LAN_NAT
+        done
+
+        while sudo iptables -C FORWARD -j ATASST_LAN_FWD 2>/dev/null; do
+            sudo iptables -D FORWARD -j ATASST_LAN_FWD
+        done
+
+        sudo iptables -t nat -F ATASST_LAN_NAT 2>/dev/null
+        sudo iptables -t nat -X ATASST_LAN_NAT 2>/dev/null
+        sudo iptables -F ATASST_LAN_FWD 2>/dev/null
+        sudo iptables -X ATASST_LAN_FWD 2>/dev/null
+
+        sudo rm -f /etc/sysctl.d/99-atasst-ipforward.conf
+
+        if ! sudo iptables -t nat -S 2>/dev/null | grep -qE -- '-j (MASQUERADE|SNAT|DNAT)'; then
+            echo "ℹ️ 已清理 ATAsst NAT 规则；未强制关闭当前 ip_forward，避免影响其它服务。"
+            log "未强制关闭ip_forward，避免影响其它服务"
+        fi
+
+        echo -e "${GREEN}✅ 已切换为 LAN 仅管理模式${NC}"
+        log "LAN已切换为仅管理模式: LAN=$LAN_IFACE WAN=$WAN_IFACE"
+    }
+
     re_detect_nmcli() {
         echo ">>> 重新检测网络连接..."
         log "用户选择重新检测网络连接，重启脚本"
@@ -961,6 +1053,8 @@ elif [ "$NET_MODE" = "nmcli" ]; then
             "应用已保存配置:activate_saved_connection" \
             "恢复 LAN 默认配置:restore_lan_default" \
             "重建 LAN 连接（救灾）:rebuild_lan_connection" \
+            "LAN 开启上网共享（NAT模式）:enable_lan_nat" \
+            "LAN 仅管理模式（关闭转发）:disable_lan_nat" \
             "重新检测网络连接:re_detect_nmcli"
     else
         menu_loop "nmcli" \
