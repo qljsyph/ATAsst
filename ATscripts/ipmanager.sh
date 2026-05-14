@@ -2,7 +2,7 @@
 # =========================================
 # 网络配置管理
 # =========================================
-#1.13.6
+#1.13.8
 # 颜色变量
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -993,7 +993,7 @@ elif [ "$NET_MODE" = "nmcli" ]; then
 
         sudo iptables -t nat -A ATASST_LAN_NAT -s "$LAN_CIDR" -o "$WAN_IFACE" -j MASQUERADE
         sudo iptables -A ATASST_LAN_FWD -i "$LAN_IFACE" -o "$WAN_IFACE" -s "$LAN_CIDR" -j ACCEPT
-        sudo iptables -A ATASST_LAN_FWD -i "$WAN_IFACE" -o "$LAN_IFACE" -d "$LAN_CIDR" -m state --state RELATED,ESTABLISHED -j ACCEPT
+        sudo iptables -A ATASST_LAN_FWD -i "$WAN_IFACE" -o "$LAN_IFACE" -d "$LAN_CIDR" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 
         echo -e "${GREEN}✅ LAN 已开启上网共享（NAT模式）${NC}"
         echo "LAN接口: $LAN_IFACE"
