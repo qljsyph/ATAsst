@@ -691,7 +691,7 @@ elif [ "$NET_MODE" = "nmcli" ]; then
             ipv4.method manual \
             ipv4.addresses \"${IP_ADDR}/${MASK}\" \
             ipv4.gateway \"${GATEWAY}\" \
-            ipv4.never-default yes \
+            ipv4.never-default no \
             ipv4.dns \"${DNS_PARAM}\" \
             ipv4.ignore-auto-dns yes \
             connection.autoconnect yes"; then
@@ -726,8 +726,9 @@ elif [ "$NET_MODE" = "nmcli" ]; then
         log "切换为 DHCP 模式"
         if run_and_log "sudo nmcli con mod \"${CON_NAME}\" \
             ipv4.method auto \
+            ipv4.addresses \"\" \
             ipv4.gateway \"\" \
-            ipv4.never-default yes \
+            ipv4.never-default no \
             ipv4.dns \"\" \
             ipv4.ignore-auto-dns no \
             connection.autoconnect yes"; then
