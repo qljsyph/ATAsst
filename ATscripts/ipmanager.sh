@@ -96,7 +96,7 @@ menu_loop() {
             local opt_label="${extra%%:*}"
             local opt_fn="${extra#*:}"
             echo "${opt_idx}）${opt_label}"
-            opt_map[$opt_idx]="$opt_fn"
+            opt_map[opt_idx]="$opt_fn"
             ((opt_idx++))
         done
         echo "${opt_idx}）退出"
@@ -315,7 +315,7 @@ else
     if ! $AUTO_SELECTED; then
         echo
         read -rp "请选择要配置的网卡编号 [1-${#ALL_IFACES[@]}]: " SELECTED
-        IFACE="${ALL_IFACES[$((SELECTED-1))]}"
+        IFACE="${ALL_IFACES[((SELECTED-1))]}"
         MANUAL_SELECTED=true
         TYPE=$(get_iface_type "$IFACE")
         ROLE=$(get_iface_role "$IFACE")
@@ -472,7 +472,7 @@ elif [ "$NET_MODE" = "netplan" ]; then
     echo "=============================="
     echo "         网络配置工具"
     echo "=============================="
-    CONFIG_FILE=$(ls /etc/netplan/*.yaml 2>/dev/null | head -n 1)
+    CONFIG_FILE=$(find /etc/netplan -maxdepth 1 -type f -name '*.yaml' 2>/dev/null | head -n 1)
     if [ -z "$CONFIG_FILE" ]; then
         echo -e "${RED}未找到 Netplan 配置文件，程序退出。${NC}"
         log "未找到 Netplan 配置文件，退出"
@@ -578,7 +578,7 @@ EOL
 
     restore_latest_backup() {
         log "用户选择恢复最近备份"
-        LATEST_BACKUP=$(ls -t "${CONFIG_FILE}".bak-* 2>/dev/null | head -n 1)
+        LATEST_BACKUP=$(find "$(dirname "$CONFIG_FILE")" -maxdepth 1 -type f -name "$(basename "$CONFIG_FILE").bak-*" -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2-)
         if [ -z "$LATEST_BACKUP" ]; then
             echo -e "${RED}未找到备份文件，无法恢复。${NC}"
             log "未找到备份文件，恢复失败"
